@@ -1,0 +1,153 @@
+"""G1 桌面操作环境：机器人 + 场景 + 随机化 reset + 观测 + 成功判定。
+
+职责边界：本模块只管"物理世界与观测"。怎么动（IK/伺服/专家）在 control/，
+怎么录（数据管线）在 data/。任务内容由 envs/tasks/ 的 Task 子类定义。
+
+设计对齐 LIBERO：每次 reset 一个随机 variant，指令文本与场景一致；
+get_obs() 返回的观测**不含任何上帝视角信息**（物体真实坐标只进
+task.info() 元数据），防止策略学到作弊输入。
+"""
+
+from typing import Optional
+
+import numpy as np
+
+import mujoco
+
+from .robot import build_g1_arm_spec, RIGHT_ARM_JOINTS
+from . import scene as sb
+from .tasks.base import Task
+from control.ik import IK_JOINTS, HOME_POSE
+from datasets.spec import OBS_SPEC
+
+SETTLE_STEPS = 300      # reset 后让物体落稳的步数 (0.002s * 300 = 0.6s)
+
+
+class G1TaskEnv:
+    """G1 桌面操作环境。"""
+
+    def __init__(self, task: Task):
+        self.task = task
+        spec = build_g1_arm_spec()
+        sb.add_world(spec)
+        task.setup(spec)
+        self.model = spec.compile()
+        self.data = mujoco.MjData(self.model)
+
+        # 执行器 id（顺序 = RIGHT_ARM_JOINTS）
+        self.arm_act_ids = np.array(
+            [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"arm_{j}")
+             for j in RIGHT_ARM_JOINTS])
+        # IK 控制链执行器 id（腰 yaw + 右臂，顺序同 control.ik.IK_JOINTS）
+        self.arm8_act_ids = np.array(
+            [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR,
+                               f"hold_{j}" if j == "waist_yaw_joint" else f"arm_{j}")
+             for j in IK_JOINTS])
+        # 夹爪两指执行器（按名查，不依赖 id 相邻）
+        self.grip_act_ids = np.array(
+            [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, n)
+             for n in ("gripper_left", "gripper_right")])
+        # 本体感知索引：右臂 + 手指关节的 qpos 地址
+        proprio_joints = RIGHT_ARM_JOINTS + ["finger_left_joint", "finger_right_joint"]
+        self.proprio_adr = np.array(
+            [self.model.jnt_qposadr[mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, j)]
+             for j in proprio_joints])
+        # 相机 id
+        self.cam_ids = {n: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, n)
+                        for n in OBS_SPEC.cameras}
+        self._renderer = mujoco.Renderer(self.model, OBS_SPEC.img_size, OBS_SPEC.img_size)
+        self.np_rng = np.random.default_rng()
+        self.instruction = ""
+        self.reset()
+
+    # ---------------- 随机化与回合管理 ----------------
+
+    def reset(self, seed: Optional[int] = None) -> dict:
+        """重置一回合。seed=None 时续用内部随机流（每回合都不同）。"""
+        if seed is not None:
+            self.np_rng = np.random.default_rng(seed)
+        mujoco.mj_resetData(self.model, self.data)
+        self.data.ctrl[:] = 0                      # 站姿 + 夹爪全开
+        # 手臂摆到 HOME（前抬悬在桌面上方），避免自然下垂时手指戳进桌面
+        for i, j in enumerate(("waist_yaw_joint",) + tuple(RIGHT_ARM_JOINTS)):
+            jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, j)
+            adr = self.model.jnt_qposadr[jid]
+            self.data.qpos[adr] = HOME_POSE[i]
+        self.data.ctrl[self.arm8_act_ids] = HOME_POSE
+        self.task.randomize(self, self.np_rng)
+        mujoco.mj_forward(self.model, self.data)
+        for _ in range(SETTLE_STEPS):              # 让物体落稳
+            mujoco.mj_step(self.model, self.data)
+        self.instruction = self.task.instruction(self, self.np_rng)
+        return self.get_obs()
+
+    # ---------------- 控制接口（脚本专家 / 策略推理用） ----------------
+
+    def set_arm(self, qpos7):
+        """右臂 7 关节目标位置。"""
+        self.data.ctrl[self.arm_act_ids] = qpos7
+
+    def set_arm8(self, qpos8):
+        """腰yaw + 右臂 7 关节位置目标（IK 控制链，顺序同 control.ik.IK_JOINTS）。"""
+        self.data.ctrl[self.arm8_act_ids] = qpos8
+
+    def set_gripper(self, close01: float):
+        """夹爪开合: 0=全开, 1=全闭。"""
+        from .robot import GRIPPER_CLOSED
+        self.data.ctrl[self.grip_act_ids] = GRIPPER_CLOSED * close01
+
+    def step(self, n: int = 1):
+        for _ in range(n):
+            mujoco.mj_step(self.model, self.data)
+
+    # ---------------- 上帝视角信息（专家决策 / 成功判定 / 元数据用，绝不进观测） ----------------
+
+    def obj_xpos(self, name: str) -> np.ndarray:
+        return self.data.body(name).xpos.copy()
+
+    def obj_vel(self, name: str) -> np.ndarray:
+        bid = self.data.body(name).id
+        return self.data.cvel[bid][3:6].copy()   # 线速度（世界系）
+
+    def site_xpos(self, name: str) -> np.ndarray:
+        return self.data.site(name).xpos.copy()
+
+    def ee_xpos(self) -> np.ndarray:
+        return self.data.site("ee_site").xpos.copy()
+
+    def set_obj_pose(self, name: str, pos, quat=(1, 0, 0, 0)):
+        jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, f"{name}_joint")
+        adr = self.model.jnt_qposadr[jid]
+        self.data.qpos[adr:adr + 3] = pos
+        self.data.qpos[adr + 3:adr + 7] = quat
+
+    def set_pad_pos(self, name: str, pos):
+        """目标垫（mocap body）直接设位置。"""
+        bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
+        self.data.mocap_pos[self.model.body_mocapid[bid]] = pos
+
+    def set_geom_rgba(self, geom_name: str, rgba):
+        gid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
+        self.model.geom_rgba[gid] = rgba
+
+    # ---------------- 观测 ----------------
+
+    def _render(self, cam: str) -> np.ndarray:
+        self._renderer.update_scene(self.data, camera=self.cam_ids[cam])
+        return self._renderer.render().copy()
+
+    def get_obs(self) -> dict:
+        """VLA 训练需要的观测（规格见 data/spec.py）：双相机 RGB + 本体感知 + 指令。"""
+        return {
+            "overhead_rgb": self._render("overhead_cam"),
+            "wrist_rgb": self._render("wrist_cam"),
+            "proprio": self.data.qpos[self.proprio_adr].copy(),
+            "instruction": self.instruction,
+        }
+
+    def is_success(self) -> bool:
+        return self.task.is_success(self)
+
+    def task_info(self) -> dict:
+        """上帝视角元数据（数据录制用，不进模型）。"""
+        return self.task.info(self)

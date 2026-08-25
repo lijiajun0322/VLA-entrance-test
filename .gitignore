@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# 虚拟环境
+.venv/
+
+# 第三方依赖（unitree_mujoco 是整仓 clone 的，体积大，不进自己的库）
+unitree_mujoco/
+
+# 录制数据与预览图（可由脚本重新生成）
+data/
+
+# 临时/日志
+*.log
+.DS_Store
+/tmp/
