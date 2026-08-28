@@ -14,11 +14,21 @@ TABLE_CENTER_X = 0.34       # 桌子中心 x（右臂+腰yaw 实测可达范围�
 TABLE_CENTER_Y = -0.13
 TABLE_SIZE = (0.16, 0.26)   # 桌面半尺寸 (x, y)
 # 右臂工作区（x, y 范围）——经关节限位约束的 8 自由度 IK 网格实测可达
-# （夹爪竖直朝下、多随机重启全局解；比无约束可达区小一圈，保证每点都能解）
+# （夹爪竖直朝下、多随机重启全局解；抓取高度 z≈0.76 下 x≥0.35,y≤-0.25 的
+# 远-低角点差 6~9mm 不可达，x 上界收到 0.34 留余量）
 WORKSPACE = dict(
-    x=(0.26, 0.38),
+    x=(0.26, 0.34),
     y=(-0.26, 0.00),
 )
+
+# 第三人称俯视相机（世界坐标）：从桌前上方看向工作区中心，覆盖整张桌面
+OVERHEAD_CAM_POS = [0.95, 0.20, 1.25]
+OVERHEAD_CAM_LOOK_AT = [0.32, -0.13, 0.80]
+OVERHEAD_CAM_FOVY = 45
+# 腕部相机（掌板局部坐标）：装在掌上沿接近方向看手指和接触区
+WRIST_CAM_POS = [0.00, 0.00, 0.08]
+WRIST_CAM_LOOK_AT = [0.15, 0.00, 0.00]
+WRIST_CAM_FOVY = 75
 
 # 任务物体颜色池（LIBERO 风格的高饱和纯色，指令文本与之绑定）
 COLORS = {
@@ -64,16 +74,18 @@ def add_world(spec: "mujoco.MjSpec"):
     wb.add_light(pos=[1.5, 1.0, 1.8], dir=[-0.5, -0.4, -0.8],
                  type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL)
 
-    # 第三人称俯视相机：从机器人后上方看向桌心
-    cam_pos = [0.05, 0.62, 1.45]
-    look_at = [TABLE_CENTER_X, TABLE_CENTER_Y, TABLE_TOP_Z]
-    wb.add_camera(name="overhead_cam", pos=cam_pos,
-                  xyaxes=quat_look_at(cam_pos, look_at), fovy=45)
+    # 第三人称俯视相机
+    wb.add_camera(name="overhead_cam", pos=OVERHEAD_CAM_POS,
+                  xyaxes=quat_look_at(OVERHEAD_CAM_POS, OVERHEAD_CAM_LOOK_AT),
+                  fovy=OVERHEAD_CAM_FOVY)
 
-    # 腕部相机：装在夹爪掌上，朝夹持方向 (+x) 看
+    # 腕部相机：装在掌板上，沿掌 +x（接近方向）看手指和工作区。
+    # 注意 MuJoCo 相机沿自身 -z 看：xyaxes 的 x=(0,-1,0), y=(0,0,1)
+    # => z = x×y = (-1,0,0)，视线 = -z = (+1,0,0) = 掌坐标系 +x ✓
     palm = spec.body("gripper_palm")
-    palm.add_camera(name="wrist_cam", pos=[0.01, 0.06, 0.05],
-                    xyaxes=[0, 1, 0, 0, 0, 1], fovy=75)
+    palm.add_camera(name="wrist_cam", pos=WRIST_CAM_POS,
+                    xyaxes=quat_look_at(WRIST_CAM_POS, WRIST_CAM_LOOK_AT),
+                    fovy=WRIST_CAM_FOVY)
 
 
 def add_object(spec: "mujoco.MjSpec", name: str, shape: str,
@@ -86,7 +98,8 @@ def add_object(spec: "mujoco.MjSpec", name: str, shape: str,
              "cylinder": mujoco.mjtGeom.mjGEOM_CYLINDER,
              "ball": mujoco.mjtGeom.mjGEOM_SPHERE}[shape]
     body.add_geom(name=f"{name}_geom", type=gtype, size=[size, size, size],
-                  rgba=list(rgba), mass=0.1, friction=[1.0, 0.005, 0.0001])
+                  rgba=list(rgba), mass=0.1, friction=[1.0, 0.005, 0.0001],
+                  solref=[0.004, 1.0])   # 硬接触：避免夹爪闭合时的接触柔顺抖动
     return body
 
 

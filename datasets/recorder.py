@@ -34,10 +34,13 @@ def _jpeg(rgb: np.ndarray) -> bytes:
 
 
 def sample_action(env) -> np.ndarray:
-    """当前帧的动作标签：ee 位置 (3) + 夹爪开度 0~1 (1)。"""
-    adr = env.model.jnt_qposadr[
-        mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_JOINT, "finger_left_joint")]
-    gripper = float(np.clip(env.data.qpos[adr] / GRIPPER_CLOSED, 0.0, 1.0))
+    """当前帧的动作标签：ee 位置 (3) + 夹爪开度 0~1 (1)。
+
+    ee 用实测位置（真实轨迹，无接触塌缩问题）；夹爪用【指令值】而非实测——
+    夹住物体时实测开度被物体挡住（如指令1.0实测0.55），录实测回放时就是
+    零夹持力，物体会在提升段滑落。标签必须记录"意图"。
+    """
+    gripper = float(np.clip(env.data.ctrl[env.grip_act_ids[0]] / GRIPPER_CLOSED, 0.0, 1.0))
     return np.concatenate([env.ee_xpos(), [gripper]])
 
 
@@ -52,9 +55,10 @@ class EpisodeRecorder:
 
     # ---- 一回合的生命周期 ----
 
-    def start(self, env):
-        """reset 之后调用。"""
+    def start(self, env, seed: int | None = None):
+        """reset 之后调用。seed 存进 manifest，回放验证据此复现初始布局。"""
         self._frames = []
+        self._seed = seed
         self._instruction = env.instruction
         self._task_info = env.task_info()
 
@@ -83,6 +87,7 @@ class EpisodeRecorder:
             "task": self.task_name,
             "success": success,
             "n_frames": n,
+            "seed": self._seed if self._seed is not None else -1,
         }
         for key in ("overhead_rgb", "wrist_rgb"):
             data[key] = np.array([f[key] for f in self._frames], dtype=object)
@@ -97,6 +102,7 @@ class EpisodeRecorder:
         self._manifest.append({
             "episode": path.name, "n_frames": n, "success": success,
             "instruction": self._instruction, "task": self.task_name,
+            "seed": self._seed,
         })
         if success:
             self._proprio_all.append(data["proprio"])

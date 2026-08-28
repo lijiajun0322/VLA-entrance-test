@@ -16,6 +16,7 @@
 from pathlib import Path
 
 import mujoco
+import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 G1_XML = PROJECT_ROOT / "unitree_mujoco" / "unitree_robots" / "g1" / "g1_29dof.xml"
@@ -33,6 +34,11 @@ RIGHT_ARM_JOINTS = [
     "right_wrist_yaw_joint",
 ]
 
+# 左臂收纳姿态：肩前抬 + 外展 + 肘弯，左手落到髋侧 (x≈-0.03, y≈0.30, z≈0.77)，
+# 完全移出 overhead_cam 视野（默认 0 位时左手悬在桌面上方会挡视线）
+LEFT_ARM_JOINTS = [j.replace("right_", "left_") for j in RIGHT_ARM_JOINTS]
+LEFT_ARM_POSE = [0.6, 0.35, 0.0, 1.2, 0.0, 0.0, 0.0]
+
 # 锁定站姿的关节：腿 + 腰 + 左臂（名字都是 XXX_joint 形式）
 HOLD_JOINTS = (
     [f"{s}_{j}_joint" for s in ("left", "right")
@@ -48,7 +54,7 @@ _GAINS = {
     "waist": (300.0, 12.0),
     "arm": (400.0, 14.0),
     "wrist": (150.0, 5.0),
-    "finger": (120.0, 4.0),
+    "finger": (250.0, 8.0),
 }
 
 # 夹爪几何：手指开度范围（关节 qpos 0=张开，0.04=闭合）。
@@ -85,7 +91,13 @@ def _add_gripper(spec):
         if g.meshname == "right_rubber_hand":
             spec.delete(g)
 
-    palm = wrist.add_body(name="gripper_palm", pos=[0.034, 0, 0])
+    # 夹爪斜置 60° 安装：让"夹爪竖直向下"时腕关节工作在中位区（余量 ~90%）。
+    # 沿小臂安装（旧行为）时竖直接近要求腕折 ~90°，贴着关节限位工作，
+    # 伺服一修正就顶死抖动；90° 安装则远-低角点臂展不够。60° 是实测折中。
+    # quat = 绕 y 轴 +60°: 掌 +x -> 腕架 (cos60°, 0, -sin60°)
+    a = np.deg2rad(60)
+    palm = wrist.add_body(name="gripper_palm", pos=[0.03, 0, 0],
+                          quat=[np.cos(a/2), 0, np.sin(a/2), 0])
     # 掌板：x 加长让它与腕链(到 x≈0.026)搭接，补上删掉橡胶手后留下的空档；
     # 颜色与机身（0.7 灰）一致，视觉上像原厂手腕的延伸
     palm.add_geom(
@@ -107,25 +119,30 @@ def _add_gripper(spec):
             type=mujoco.mjtJoint.mjJNT_SLIDE,
             axis=[0, -sign, 0],  # q 增大 = 向掌中心收拢（左指在 +y 侧，轴向 -y）
             range=[GRIPPER_OPEN, GRIPPER_CLOSED],
-            damping=0.5,
+            damping=4.0,          # 高阻尼 = 柔和闭合，避免把物体挤射出去
+            frictionloss=0.8,     # 静摩擦死区：吃掉夹持力-接触柔顺的 ±1mm 极限环
+                                   # （夹持力 ~5N，0.8N 死区不影响抓取）
         )
-        # 指身沿接近方向 (+x) 前伸的长条板，厚方向为 y（闭合方向）
+        # 指身沿接近方向 (+x) 前伸的长条板，厚方向为 y（闭合方向）。
+        # z 向加高到 36mm：夹 5cm 方块时接触高度余量足，ee 高度偏差 ±1cm 也能夹住
         finger.add_geom(
             name=f"finger_{side}_geom",
             type=mujoco.mjtGeom.mjGEOM_BOX,
-            size=[0.026, 0.003, 0.012],
+            size=[0.026, 0.003, 0.018],
             pos=[0.026, sign * 0.003, 0],
             rgba=[0.72, 0.72, 0.74, 1],
             friction=[1.5, 0.005, 0.0001],
+            solref=[0.004, 1.0],   # 硬接触：消除夹持-接触柔顺的极限环抖动
         )
         # 指尖一小段深色胶面（高摩擦，夹物体就靠它）
         finger.add_geom(
             name=f"finger_{side}_tip_geom",
             type=mujoco.mjtGeom.mjGEOM_BOX,
-            size=[0.008, 0.003, 0.012],
+            size=[0.008, 0.003, 0.014],
             pos=[0.056, sign * 0.003, 0],
             rgba=[0.2, 0.2, 0.22, 1],
             friction=[1.8, 0.005, 0.0001],
+            solref=[0.004, 1.0],
         )
 
     j = spec.joint("finger_left_joint")

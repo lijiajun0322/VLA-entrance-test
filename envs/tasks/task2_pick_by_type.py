@@ -26,7 +26,8 @@ class Task2PickByType(Task):
         self.target_pad = "pad0"
 
     def randomize(self, env, rng):
-        pts = sb.sample_workspace(rng, 6, min_dist=0.12)
+        # 0.09 = 垫半宽0.055 + 物体半宽0.022 的不重叠下限（工作区缩小后 0.12 放不下6点）
+        pts = sb.sample_workspace(rng, 6, min_dist=0.09)
         colors = list(sb.COLORS)
         perm = rng.permutation(len(colors))
         # 物体 3 色 + 垫 3 色，全部不同（颜色既是外观也是指令词）

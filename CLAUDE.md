@@ -64,6 +64,9 @@ mjpython test_sim.py
 - `tests/smoke_test.py` — 冒烟安全网：构建/reset/专家成功率/录制 round-trip
 - `scripts/run_expert.py` — `python scripts/run_expert.py 1 --seeds 20` headless 评测；
   `mjpython scripts/run_expert.py 1 --visual` 可视化演示专家执行
+- `scripts/collect_data.py` — `python scripts/collect_data.py 1 --episodes 50` 采集数据集
+- `scripts/inspect_data.py` — 统计/关键帧拼图/ee轨迹图/回放验证（逐帧IK+插值+伺服尾，
+  外加下降沿对中悬停；开环跟随 80% 成功，残余为工作区角点跟踪误差）
 - `scripts/demo_tasks.py` — `mjpython scripts/demo_tasks.py [任务号]` 可视化看任务和随机化
 - `data/preview/` — 各任务相机预览图
 - `unitree_mujoco/` — 宇树官方 MuJoCo repo（clone 而来）；G1 模型在

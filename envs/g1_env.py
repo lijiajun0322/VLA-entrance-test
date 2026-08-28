@@ -14,7 +14,7 @@ import numpy as np
 
 import mujoco
 
-from .robot import build_g1_arm_spec, RIGHT_ARM_JOINTS
+from .robot import build_g1_arm_spec, RIGHT_ARM_JOINTS, LEFT_ARM_JOINTS, LEFT_ARM_POSE
 from . import scene as sb
 from .tasks.base import Task
 from control.ik import IK_JOINTS, HOME_POSE
@@ -47,6 +47,13 @@ class G1TaskEnv:
         self.grip_act_ids = np.array(
             [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, n)
              for n in ("gripper_left", "gripper_right")])
+        # 左臂收纳姿态的 qpos 地址与保持执行器 id（reset 时摆出画面外）
+        self._left_qadr = np.array(
+            [self.model.jnt_qposadr[mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, j)]
+             for j in LEFT_ARM_JOINTS])
+        self._left_act_ids = np.array(
+            [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"hold_{j}")
+             for j in LEFT_ARM_JOINTS])
         # 本体感知索引：右臂 + 手指关节的 qpos 地址
         proprio_joints = RIGHT_ARM_JOINTS + ["finger_left_joint", "finger_right_joint"]
         self.proprio_adr = np.array(
@@ -56,6 +63,11 @@ class G1TaskEnv:
         self.cam_ids = {n: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, n)
                         for n in OBS_SPEC.cameras}
         self._renderer = mujoco.Renderer(self.model, OBS_SPEC.img_size, OBS_SPEC.img_size)
+        # 重力补偿作用的 dof：所有非 freejoint（机器人铰链/滑动关节）。
+        # 物体的 freejoint 绝不能补——否则物体失去重力飘起来。
+        self._robot_dofs = np.array(
+            [i for i in range(self.model.nv)
+             if self.model.jnt_type[self.model.dof_jntid[i]] != mujoco.mjtJoint.mjJNT_FREE])
         self.np_rng = np.random.default_rng()
         self.instruction = ""
         self.reset()
@@ -74,6 +86,9 @@ class G1TaskEnv:
             adr = self.model.jnt_qposadr[jid]
             self.data.qpos[adr] = HOME_POSE[i]
         self.data.ctrl[self.arm8_act_ids] = HOME_POSE
+        # 左臂收到髋侧收纳位，避免悬在桌面上方挡 overhead_cam 视线
+        self.data.qpos[self._left_qadr] = LEFT_ARM_POSE
+        self.data.ctrl[self._left_act_ids] = LEFT_ARM_POSE
         self.task.randomize(self, self.np_rng)
         mujoco.mj_forward(self.model, self.data)
         for _ in range(SETTLE_STEPS):              # 让物体落稳
@@ -97,7 +112,16 @@ class G1TaskEnv:
         self.data.ctrl[self.grip_act_ids] = GRIPPER_CLOSED * close01
 
     def step(self, n: int = 1):
+        """推进一步仿真（带重力补偿：机器人的 qfrc_bias 前馈抵消）。
+
+        没有补偿时位置伺服靠稳态误差扛重力（kp·Δq = τ_重力），关节永远垂
+        ~1-2cm 且逐级累积；补偿后伺服只负责运动跟踪，静态下垂趋近零。
+        qfrc_bias 是上一步 forward 的值（滞后一步，500Hz 下可忽略）。
+        """
         for _ in range(n):
+            self.data.qfrc_applied[:] = 0
+            self.data.qfrc_applied[self._robot_dofs] = \
+                self.data.qfrc_bias[self._robot_dofs]
             mujoco.mj_step(self.model, self.data)
 
     # ---------------- 上帝视角信息（专家决策 / 成功判定 / 元数据用，绝不进观测） ----------------

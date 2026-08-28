@@ -1,7 +1,7 @@
 """任务 1（最简单）：抓起桌上的方块，放到目标垫上。
 
 指令例: "pick up the red cube and place it on the green pad"
-随机化: 方块/垫/干扰物位置、方块与垫的颜色组合 —— 防 VLA 对单一固定布局过拟合。
+随机化: 方块/垫位置、方块与垫的颜色组合 —— 防 VLA 对单一固定布局过拟合。
 """
 
 import numpy as np
@@ -15,16 +15,14 @@ class Task1PickPlace(Task):
 
     def setup(self, spec):
         sb.add_object(spec, "cube", "cube", size=0.025)
-        sb.add_object(spec, "distractor", "cylinder", size=0.02)   # 干扰物：永远不要碰
         sb.add_pad(spec, "target_pad", rgba=[0, 0, 0, 1], half=0.06)
         self.cube_color = "red"
         self.pad_color = "green"
 
     def randomize(self, env, rng):
-        # 三者位置：方块、目标垫、干扰物互不重叠
-        (cx, cy), (px, py), (dx, dy) = sb.sample_workspace(rng, 3, min_dist=0.15)
+        # 方块与目标垫互不重叠
+        (cx, cy), (px, py) = sb.sample_workspace(rng, 2, min_dist=0.15)
         env.set_obj_pose("cube", sb.table_pos(cx, cy, 0.05))
-        env.set_obj_pose("distractor", sb.table_pos(dx, dy, 0.05))
         env.set_pad_pos("target_pad", [px, py, sb.TABLE_TOP_Z + 0.005])
         # 颜色：方块和垫颜色不同
         colors = list(sb.COLORS)
@@ -55,5 +53,4 @@ class Task1PickPlace(Task):
             "pad_color": self.pad_color,
             "cube_pos": env.obj_xpos("cube").tolist(),
             "pad_pos": env.obj_xpos("target_pad").tolist(),
-            "distractor_pos": env.obj_xpos("distractor").tolist(),
         }
