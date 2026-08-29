@@ -59,7 +59,7 @@ def test_recorder_roundtrip():
     from envs import ALL_TASKS, G1TaskEnv
     from control.expert import PickPlaceExpert
     from datasets.recorder import EpisodeRecorder
-    from datasets.spec import ACTION_SPEC
+    from datasets.spec import ACTION_SPEC, OBS_SPEC
 
     with tempfile.TemporaryDirectory() as tmp:
         rec = EpisodeRecorder(tmp, "task1_pick_place")
@@ -80,7 +80,8 @@ def test_recorder_roundtrip():
 
         d = np.load(path, allow_pickle=True)
         assert d["action"].shape[1] == ACTION_SPEC.dim
-        assert d["proprio"].shape[1] == 9 and d["ctrl"].shape[1] == 10  # 8关节+2指
+        assert d["proprio"].shape[1] == OBS_SPEC.proprio_dim == 10
+        assert d["ctrl"].shape[1] == 10  # 8关节目标+2指目标
         assert d["n_frames"] == len(d["action"])
         # 图像可解码且尺寸正确
         img = Image.open(io_bytes(d["overhead_rgb"][0]))

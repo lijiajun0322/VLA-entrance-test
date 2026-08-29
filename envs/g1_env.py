@@ -54,8 +54,9 @@ class G1TaskEnv:
         self._left_act_ids = np.array(
             [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"hold_{j}")
              for j in LEFT_ARM_JOINTS])
-        # 本体感知索引：右臂 + 手指关节的 qpos 地址
-        proprio_joints = RIGHT_ARM_JOINTS + ["finger_left_joint", "finger_right_joint"]
+        # 本体感知索引：完整 IK 控制链（腰 yaw + 右臂）+ 手指关节。
+        # 顺序与策略控制链保持一致，避免相同右臂状态对应多个不可观测的 EE 位姿。
+        proprio_joints = IK_JOINTS + ["finger_left_joint", "finger_right_joint"]
         self.proprio_adr = np.array(
             [self.model.jnt_qposadr[mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, j)]
              for j in proprio_joints])

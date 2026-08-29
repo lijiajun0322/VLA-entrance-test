@@ -4,6 +4,29 @@ A LIBERO-style manipulation playground for a Unitree G1 humanoid in MuJoCo:
 scripted-expert task environments, model-free control, a demonstration data
 pipeline, and (planned) VLA policy inference.
 
+## Quick reference
+
+```bash
+# evaluate the scripted expert (task id: 1 = pick&place, 2 = pick by type)
+python scripts/run_expert.py 1 --seeds 30            # headless success rate
+mjpython scripts/run_expert.py 1 --visual            # watch it execute
+
+# collect demonstration episodes
+python scripts/collect_data.py 1 --episodes 10 --version v1
+
+# check the dataset: stats + montages + trajectory + full-batch replay
+python scripts/check_data.py --task task1_pick_place --version v1
+
+# interactive task viewer
+mjpython scripts/demo_tasks.py 2
+```
+
+Task argument conventions: `run_expert` / `collect_data` take a numeric id
+(`1`/`2`/`3`); `check_data` reads a dataset folder — `--task` is the
+first-level dir name under `data/` (i.e. the task's registered name,
+`task1_pick_place` / `task2_pick_by_type`), `--version` the second level:
+`data/<task>/<version>/`.
+
 ## Setup
 
 ```bash
@@ -25,17 +48,12 @@ scripts/demo_tasks.py    interactive task viewer (mjpython)
 
 ### 1. Evaluate the expert
 
-The first positional argument is the task id: `1` = pick & place,
-`2` = pick by type, `3` = (placeholder).
-
 ```bash
 python scripts/run_expert.py 1 --seeds 30            # headless, success rate
 mjpython scripts/run_expert.py 1 --visual            # watch it execute
 ```
 
 ### 2. Collect demonstration data
-
-First positional argument is the task id (`1`/`2`/`3`), same as above.
 
 ```bash
 python scripts/collect_data.py 1 --episodes 10 --version v1
@@ -74,8 +92,8 @@ Notes:
 
 ### 3. Check the dataset
 
-`--task` takes the task **name** (`task1_pick_place` / `task2_pick_by_type`),
-not the numeric id.
+`--task`/`--version` point at the dataset folder `data/<task>/<version>/`
+(task name = first-level dir under `data/`).
 
 ```bash
 python scripts/check_data.py --task task1_pick_place --version v1
@@ -105,14 +123,18 @@ mjpython scripts/demo_tasks.py 2          # cycle random variants of task 2
 
 | dataset | version | notes |
 |---|---|---|
-| task1_pick_place | v1 | 10 episodes, color-free instructions |
-| task2_pick_by_type | v0 | 10 episodes, type-only object instructions |
+| task1_pick_place | v2 | 50 episodes, 10D proprio, color-free instructions |
+| task2_pick_by_type | v2 | 10 episodes, 10D proprio, type-only object instructions |
+
+Observation proprioception is 10D: waist yaw, seven right-arm joints, and two
+finger joints. Dataset versions recorded before v2 used a legacy 9D state that
+omitted waist yaw.
 
 ## Project layout
 
 ```
 envs/      task environments (robot, scene, tasks/) — physics & observations
-control/   ik.py / servo.py / expert.py / executor.py — how to move
+control/   ik.py / servo.py / executor.py / expert.py — how to move
 datasets/  spec.py / recorder.py — data contract & recording
 scripts/   thin CLI wrappers (collect / check / evaluate / demo)
 data/      datasets, videos, previews (gitignored)

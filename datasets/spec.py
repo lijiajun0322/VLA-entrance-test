@@ -12,7 +12,7 @@ SIM_DT = 0.002           # 仿真步长 (s)
 class ObsSpec:
     cameras: tuple               # 相机名（= get_obs 里图像字段的来源）
     img_size: int                # 正方形图像边长
-    proprio_dim: int             # 本体感知维度（右臂7 + 双指2）
+    proprio_dim: int             # 本体感知维度（腰yaw1 + 右臂7 + 双指2）
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,7 @@ class ActionSpec:
 OBS_SPEC = ObsSpec(
     cameras=("overhead_cam", "wrist_cam"),
     img_size=224,
-    proprio_dim=9,
+    proprio_dim=10,
 )
 
 # 动作标签 = ee_site 世界坐标(3) + 夹爪开度(1)。

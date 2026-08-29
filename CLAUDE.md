@@ -16,7 +16,7 @@ source .venv/bin/activate
 或者在单条命令中直接使用虚拟环境的解释器：
 
 ```bash
-.venv/bin/python test_sim.py
+.venv/bin/python scripts/run_expert.py 1 --seeds 10
 .venv/bin/pip install <package>
 ```
 
@@ -26,7 +26,7 @@ source .venv/bin/activate
   必须用 `mjpython` 运行，不能用普通 `python`：
 
 ```bash
-mjpython test_sim.py
+mjpython scripts/demo_tasks.py 1
 ```
 
 - 不涉及可视化窗口的脚本（加载模型、跑物理仿真、训练数据生成等）用普通 `python` 即可。
@@ -55,7 +55,8 @@ mjpython test_sim.py
   - `expert.py` — `PickPlaceExpert` 脚本专家：路点 IK + 关节插值 + 伺服修正；
     task1 成功率 30/30；构造参数来自 `Task.expert_spec()`
 - `datasets/` — 数据层（任务三，Python 包）
-  - `spec.py` — `OBS_SPEC`/`ACTION_SPEC`：观测（双相机 224 RGB + 9 维 proprio）、
+  - `spec.py` — `OBS_SPEC`/`ACTION_SPEC`：观测（双相机 224 RGB + 10 维 proprio：
+    腰yaw+右臂7+双指2）、
     动作标签（ee_xyz + gripper, 4 维 @20Hz）的唯一契约
   - `recorder.py` — `EpisodeRecorder`：逐帧录 obs/action/ctrl/元数据，npz + manifest
     + 归一化统计；失败回合归档到 failures/

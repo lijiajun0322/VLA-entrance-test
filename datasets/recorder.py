@@ -1,7 +1,7 @@
 """回合录制器：把专家跑出的轨迹存成可训练的数据集。
 
 每帧记录三块内容（规格见 datasets/spec.py）：
-  观测   overhead_rgb / wrist_rgb (JPEG 压缩)、proprio (9)
+  观测   overhead_rgb / wrist_rgb (JPEG 压缩)、proprio (10：腰yaw+右臂7+双指2)
   标签   action = [ee_x, y, z, gripper] (4) —— VLA 的监督信号
   备份   ctrl (10 = 腰+右臂8 + 双指2, 关节目标) —— 可离线转成其他动作空间
   元数据 phase、上帝视角 task_info（分析用，绝不进模型）
