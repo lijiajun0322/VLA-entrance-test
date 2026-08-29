@@ -13,12 +13,17 @@ TABLE_TOP_Z = 0.72          # 桌面高度
 TABLE_CENTER_X = 0.34       # 桌子中心 x（右臂+腰yaw 实测可达范围内）
 TABLE_CENTER_Y = -0.13
 TABLE_SIZE = (0.16, 0.26)   # 桌面半尺寸 (x, y)
-# 右臂工作区（x, y 范围）——经关节限位约束的 8 自由度 IK 网格实测可达
-# （夹爪竖直朝下、多随机重启全局解；抓取高度 z≈0.76 下 x≥0.35,y≤-0.25 的
-# 远-低角点差 6~9mm 不可达，x 上界收到 0.34 留余量）
+# 右臂工作区（x, y 范围）——z=0.764（抓取/放置高度，最低最紧）IK 网格实测可达
+# 的保守内缩矩形（x≥0.35,y≤-0.25 远-低角差 6~9mm 不可达）。
+# 保持窄条核心区：扩大到近身区（x<0.26）后转移距离变长，插值峰值速度超出
+# 电机力矩上限（饱和欠账）+ 近身构型自碰撞，动作出现可见停滞
+# 右臂工作区（x, y 范围）——z=0.764（抓取/放置高度，最低最紧）IK 网格实测可达
+# 的保守内缩矩形（x≥0.35,y≤-0.25 远-低角差 6~9mm 不可达）。
+# y 上界 -0.05：y>-0.05 的近身角（x=0.26,y≈0）构型接近位置雅可比奇异带，
+# 转移/放置经过时 ee 明显降速（实测降速点全部落在 y∈[-0.06,0]）
 WORKSPACE = dict(
     x=(0.26, 0.34),
-    y=(-0.26, 0.00),
+    y=(-0.26, -0.05),
 )
 
 # 第三人称俯视相机（世界坐标）：从桌前上方看向工作区中心，覆盖整张桌面
@@ -90,16 +95,32 @@ def add_world(spec: "mujoco.MjSpec"):
 
 def add_object(spec: "mujoco.MjSpec", name: str, shape: str,
                size: float, rgba=(0.5, 0.5, 0.5, 1), pos=(0.45, 0, TABLE_TOP_Z + 0.05)):
-    """加一个带 freejoint 的任务物体。shape: cube / cylinder / ball。size 为半边长/半径。
+    """加一个带 freejoint 的任务物体。shape: cube / cylinder / ball / t。
+    size 为半边长/半径（t 形状忽略 size，用固定两块板拼装）。
     rgba 只是初始色，任务每回合会随机覆盖。"""
     body = spec.worldbody.add_body(name=name, pos=list(pos))
     body.add_freejoint(name=f"{name}_joint")
+    kw = dict(rgba=list(rgba), friction=[1.0, 0.005, 0.0001],
+              solref=[0.004, 1.0])   # 硬接触：避免夹爪闭合时的接触柔顺抖动
+    if shape == "t":
+        # T 字积木（平躺放置，初始位姿即稳定位姿）：
+        # 横梁 4.6×2.4×4.4cm + 竖梁 2.4×3.4×4.4cm（重叠 0.8cm），体积 76cm³
+        # （介于圆柱 67 与方块 85 之间）。厚度 4.4cm 与方块同高——抓取目标
+        # z 与方块一致（0.764），避免薄 T 的低目标把手臂构型带进位置雅可比
+        # 奇异带（最小奇异值 ~0.02，descend 残差卡 1cm 磨到超时）。
+        # 两块板相对 body 原点对称摆放，原点 = T 几何中心，落在竖梁上
+        body.add_geom(name=f"{name}_geom", type=mujoco.mjtGeom.mjGEOM_BOX,
+                      size=[0.023, 0.012, 0.022], pos=[0, -0.014, 0],
+                      mass=0.06, **kw)
+        body.add_geom(name=f"{name}_geom_stem", type=mujoco.mjtGeom.mjGEOM_BOX,
+                      size=[0.012, 0.017, 0.022], pos=[0, 0.011, 0],
+                      mass=0.04, **kw)
+        return body
     gtype = {"cube": mujoco.mjtGeom.mjGEOM_BOX,
              "cylinder": mujoco.mjtGeom.mjGEOM_CYLINDER,
              "ball": mujoco.mjtGeom.mjGEOM_SPHERE}[shape]
     body.add_geom(name=f"{name}_geom", type=gtype, size=[size, size, size],
-                  rgba=list(rgba), mass=0.1, friction=[1.0, 0.005, 0.0001],
-                  solref=[0.004, 1.0])   # 硬接触：避免夹爪闭合时的接触柔顺抖动
+                  mass=0.1, **kw)
     return body
 
 

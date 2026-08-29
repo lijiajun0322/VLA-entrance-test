@@ -1,25 +1,26 @@
 """回合录制器：把专家跑出的轨迹存成可训练的数据集。
 
-每帧记录三块内容（规格见 data/spec.py）：
+每帧记录三块内容（规格见 datasets/spec.py）：
   观测   overhead_rgb / wrist_rgb (JPEG 压缩)、proprio (9)
-  标签   action = [ee_x, ee_y, ee_z, gripper] (4) —— VLA 的监督信号
+  标签   action = [ee_x, y, z, gripper] (4) —— VLA 的监督信号
   备份   ctrl (10 = 腰+右臂8 + 双指2, 关节目标) —— 可离线转成其他动作空间
   元数据 phase、上帝视角 task_info（分析用，绝不进模型）
 
-存储布局：
-  out_dir/episode_0000.npz   每回合一个文件
-  out_dir/failures/          失败回合（单独归档，报告用）
-  out_dir/manifest.json      索引
-  out_dir/stats.json         proprio/action 的均值方差（训练归一化用）
+存储布局（一回合三件套，npz + mp4 同名对应）：
+  out_dir/episodes/episode_0000.npz   逐帧数据
+  out_dir/videos/episode_0000.mp4     双相机并排视频（20fps，与采样同频）
+  out_dir/manifest.jsonl              索引，一回合一行
+  out_dir/norm_stats.json             proprio/action 的均值方差（训练归一化用）
+  out_dir/failures/                   失败回合（npz+视频成对归档；无失败不建此目录）
 """
 
 import io
 import json
 from pathlib import Path
 
-import mujoco
+import imageio.v2 as imageio
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from envs.robot import GRIPPER_CLOSED
 from .spec import ACTION_SPEC, OBS_SPEC
@@ -44,14 +45,35 @@ def sample_action(env) -> np.ndarray:
     return np.concatenate([env.ee_xpos(), [gripper]])
 
 
+def _compose(overhead: np.ndarray, wrist: np.ndarray, caption: str) -> np.ndarray:
+    """双相机横排 + 左上角阶段字幕，与 scripts/check_data.py 的版式一致。"""
+    img = Image.fromarray(overhead)
+    strip = Image.new("RGB", (img.width, 22), (0, 0, 0))
+    ImageDraw.Draw(strip).text((6, 5), caption[:70], fill=(255, 255, 255))
+    img.paste(strip, (0, 0))
+    return np.concatenate([np.array(img), wrist], axis=1)
+
+
 class EpisodeRecorder:
     def __init__(self, out_dir: str | Path, task_name: str):
         self.out_dir = Path(out_dir)
-        (self.out_dir / "failures").mkdir(parents=True, exist_ok=True)
+        for sub in ("episodes", "videos"):
+            (self.out_dir / sub).mkdir(parents=True, exist_ok=True)
         self.task_name = task_name
-        self._manifest = []
+        # 已有 manifest 则接续编号与索引：同一版本目录追加采集不会覆盖旧文件
+        man = self.out_dir / "manifest.jsonl"
+        if man.exists():
+            self._manifest = [json.loads(l) for l in
+                              man.read_text().splitlines() if l.strip()]
+            ids = [int(Path(e["episode"]).stem.split("_")[-1])
+                   for e in self._manifest]
+            self._ep_id = max(ids) + 1 if ids else 0
+            print(f"[recorder] appending to existing dataset, "
+                  f"resuming at episode_{self._ep_id:04d}")
+        else:
+            self._manifest = []
+            self._ep_id = 0
         self._proprio_all, self._action_all = [], []
-        self._ep_id = 0
 
     # ---- 一回合的生命周期 ----
 
@@ -61,6 +83,10 @@ class EpisodeRecorder:
         self._seed = seed
         self._instruction = env.instruction
         self._task_info = env.task_info()
+        self._video_path = self.out_dir / "videos" / f"episode_{self._ep_id:04d}.mp4"
+        self._writer = imageio.get_writer(self._video_path,
+                                          fps=ACTION_SPEC.control_hz,
+                                          macro_block_size=1)
 
     def sample(self, env, phase: str = ""):
         """专家每走 sample_every 步调一次（建议在 collect_data 里计数）。"""
@@ -75,10 +101,15 @@ class EpisodeRecorder:
             "phase": phase,
             "sim_t": float(env.data.time),
         })
+        self._writer.append_data(_compose(obs["overhead_rgb"], obs["wrist_rgb"],
+                                          f"[{phase}] {self._instruction}"))
 
     def end(self, success: bool) -> Path | None:
-        """回合结束。成功才入正集；失败归档到 failures/。"""
+        """回合结束。成功入正集（episodes/ + videos/）；
+        失败成对归档到 failures/（npz + 视频）；无失败不建 failures/ 目录。"""
+        self._writer.close()
         if not self._frames:
+            self._video_path.unlink(missing_ok=True)
             return None
         n = len(self._frames)
         data = {
@@ -95,27 +126,34 @@ class EpisodeRecorder:
             data[key] = np.stack([f[key] for f in self._frames])
         data["phase"] = np.array([f["phase"] for f in self._frames])
 
-        sub = "" if success else "failures/"
-        path = self.out_dir / f"{sub}episode_{self._ep_id:04d}.npz"
+        stem = f"episode_{self._ep_id:04d}"
+        if success:
+            path = self.out_dir / "episodes" / f"{stem}.npz"
+            ep_rel, vid_rel = f"episodes/{stem}.npz", f"videos/{stem}.mp4"
+        else:
+            fail_dir = self.out_dir / "failures"
+            fail_dir.mkdir(exist_ok=True)          # 只有真失败才建目录
+            path = fail_dir / f"{stem}.npz"
+            ep_rel, vid_rel = f"failures/{stem}.npz", f"failures/{stem}.mp4"
+            self._video_path.rename(fail_dir / f"{stem}.mp4")
         np.savez_compressed(path, **data)
 
-        self._manifest.append({
-            "episode": path.name, "n_frames": n, "success": success,
+        entry = {
+            "episode": ep_rel, "video": vid_rel,
+            "n_frames": n, "success": success,
             "instruction": self._instruction, "task": self.task_name,
             "seed": self._seed,
-        })
+        }
+        self._manifest.append(entry)
+        with open(self.out_dir / "manifest.jsonl", "a") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         if success:
             self._proprio_all.append(data["proprio"])
             self._action_all.append(data["action"])
         self._ep_id += 1
-        self._write_manifest()
         return path
 
     # ---- 汇总 ----
-
-    def _write_manifest(self):
-        (self.out_dir / "manifest.json").write_text(
-            json.dumps(self._manifest, indent=1, ensure_ascii=False))
 
     def write_stats(self):
         """成功回合的 proprio/action 归一化统计（训练时直接用）。"""
@@ -134,4 +172,4 @@ class EpisodeRecorder:
             "action_spec": {"names": list(ACTION_SPEC.names),
                             "control_hz": ACTION_SPEC.control_hz},
         }
-        (self.out_dir / "stats.json").write_text(json.dumps(stats, indent=1))
+        (self.out_dir / "norm_stats.json").write_text(json.dumps(stats, indent=1))

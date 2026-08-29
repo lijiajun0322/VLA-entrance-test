@@ -60,13 +60,17 @@ mjpython test_sim.py
   - `recorder.py` — `EpisodeRecorder`：逐帧录 obs/action/ctrl/元数据，npz + manifest
     + 归一化统计；失败回合归档到 failures/
 - `data/` — 录制数据与预览图的存放处（gitignore，不入库）：
-  `data/<task_name>/v0/` 为数据集，`data/preview/` 为预览图
+  `data/<task_name>/v0/` 为数据集，`data/preview/` 为预览图，
+  `data/<task_name>_videos/` 为各任务演示视频
 - `tests/smoke_test.py` — 冒烟安全网：构建/reset/专家成功率/录制 round-trip
 - `scripts/run_expert.py` — `python scripts/run_expert.py 1 --seeds 20` headless 评测；
   `mjpython scripts/run_expert.py 1 --visual` 可视化演示专家执行
 - `scripts/collect_data.py` — `python scripts/collect_data.py 1 --episodes 50` 采集数据集
-- `scripts/inspect_data.py` — 统计/关键帧拼图/ee轨迹图/回放验证（逐帧IK+插值+伺服尾，
-  外加下降沿对中悬停；开环跟随 80% 成功，残余为工作区角点跟踪误差）
+  （`--seeds` 可显式指定 seed 列表控制回合构成）
+- `scripts/check_data.py` — 数据集检查 + 回放验证（原 inspect_data/record_video
+  合并）：统计/关键帧拼图/ee轨迹图，`--replay N` 用 control/executor 跟随动作
+  标签重跑验证可执行性（任务 4 部署链路预演），`--video` 同步录回放 MP4 到
+  `inspect/`，与 `videos/` 的专家执行对照
 - `scripts/demo_tasks.py` — `mjpython scripts/demo_tasks.py [任务号]` 可视化看任务和随机化
 - `data/preview/` — 各任务相机预览图
 - `unitree_mujoco/` — 宇树官方 MuJoCo repo（clone 而来）；G1 模型在

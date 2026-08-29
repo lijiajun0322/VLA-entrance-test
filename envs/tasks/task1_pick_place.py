@@ -1,7 +1,8 @@
 """任务 1（最简单）：抓起桌上的方块，放到目标垫上。
 
-指令例: "pick up the red cube and place it on the green pad"
-随机化: 方块/垫位置、方块与垫的颜色组合 —— 防 VLA 对单一固定布局过拟合。
+指令例: "pick up the cube and place it on the pad"（单物体单垫，不提颜色）
+随机化: 方块/垫位置、颜色组合（颜色仅视觉随机化，指令不引用）—— 防 VLA
+对单一固定布局过拟合。
 """
 
 import numpy as np
@@ -34,8 +35,8 @@ class Task1PickPlace(Task):
         env.set_geom_rgba("target_pad_geom", sb.COLORS[self.pad_color])
 
     def instruction(self, env, rng):
-        return (f"pick up the {self.cube_color} cube "
-                f"and place it on the {self.pad_color} pad")
+        # 单物体单垫，指令不提颜色（颜色仅作为视觉随机化，防布局过拟合）
+        return "pick up the cube and place it on the pad"
 
     def is_success(self, env) -> bool:
         cube, pad = env.obj_xpos("cube"), env.obj_xpos("target_pad")

@@ -41,6 +41,7 @@ class PickPlaceExpert:
         self.obj_name = spec["obj_name"]
         self.pad_name = spec["pad_name"]
         self.place_h = spec.get("place_h", 0.045)
+        self.grasp_z = spec.get("grasp_z", GRASP_Z_OFF)   # 按物体半高让指板咬在中部
         self.servo = CartesianServo(env.model, env.data)
         self.phase_i = 0
         self.phase_step = 0
@@ -77,7 +78,7 @@ class PickPlaceExpert:
         if ph == "above_obj":
             return obj + [0, 0, APPROACH_H]
         if ph == "descend":
-            return obj + [0, 0, GRASP_Z_OFF]
+            return obj + [0, 0, self.grasp_z]
         if ph == "lift":
             return obj + [0, 0, LIFT_H]
         if ph == "above_pad":

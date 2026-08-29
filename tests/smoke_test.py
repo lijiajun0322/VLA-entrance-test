@@ -87,9 +87,13 @@ def test_recorder_roundtrip():
         assert img.size == (224, 224)
         # action 与 task_info 对齐（上帝视角元数据存在且可解析）
         assert json.loads(str(d["task_info"]))
-        stats = json.loads((Path(tmp) / "stats.json").read_text())
+        # 新布局三件套：episodes/ + videos/ + manifest.jsonl + norm_stats.json
+        lines = (Path(tmp) / "manifest.jsonl").read_text().splitlines()
+        assert len(lines) == 1 and json.loads(lines[0])["n_frames"] == int(d["n_frames"])
+        assert (Path(tmp) / "videos" / "episode_0000.mp4").exists()
+        stats = json.loads((Path(tmp) / "norm_stats.json").read_text())
         assert stats["n_episodes"] == 1
-        print(f"  [ok] 录制 round-trip ({int(d['n_frames'])} 帧)")
+        print(f"  [ok] 录制 round-trip ({int(d['n_frames'])} 帧 + 视频)")
 
 
 def io_bytes(b):
