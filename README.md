@@ -135,7 +135,7 @@ omitted waist yaw.
 ```
 envs/      task environments (robot, scene, tasks/) — physics & observations
 control/   ik.py / servo.py / executor.py / expert.py — how to move
-datasets/  spec.py / recorder.py — data contract & recording
+mujoco_datasets/  spec.py / recorder.py — data contract & recording
 scripts/   thin CLI wrappers (collect / check / evaluate / demo)
 data/      datasets, videos, previews (gitignored)
 ```

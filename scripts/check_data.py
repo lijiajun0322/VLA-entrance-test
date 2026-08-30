@@ -103,7 +103,7 @@ def replay_check(out_dir, manifest, task_name: str, n: int, video: bool):
     from envs.tasks import TASKS
     from envs.g1_env import G1TaskEnv
     from control.executor import execute_actions
-    from datasets.spec import ACTION_SPEC
+    from mujoco_datasets.spec import ACTION_SPEC
 
     env = G1TaskEnv(TASKS[task_name]())
     renderer = None

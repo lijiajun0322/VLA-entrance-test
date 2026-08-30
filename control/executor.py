@@ -13,7 +13,7 @@ import mujoco
 
 from .ik import solve_ik, IK_JOINTS, HOME_POSE
 from .servo import CartesianServo
-from datasets.spec import ACTION_SPEC
+from mujoco_datasets.spec import ACTION_SPEC
 
 SERVO_TAIL = 10       # 每帧最后 N 步用笛卡尔伺服补残差
 HOVER_Z = 0.80        # 下降沿检测阈值（工作段高度以下 = 接近物体）

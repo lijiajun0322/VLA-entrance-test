@@ -18,7 +18,7 @@ from .robot import build_g1_arm_spec, RIGHT_ARM_JOINTS, LEFT_ARM_JOINTS, LEFT_AR
 from . import scene as sb
 from .tasks.base import Task
 from control.ik import IK_JOINTS, HOME_POSE
-from datasets.spec import OBS_SPEC
+from mujoco_datasets.spec import OBS_SPEC
 
 SETTLE_STEPS = 300      # reset 后让物体落稳的步数 (0.002s * 300 = 0.6s)
 

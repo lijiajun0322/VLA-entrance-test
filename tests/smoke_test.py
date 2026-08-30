@@ -21,7 +21,7 @@ from PIL import Image
 def test_build_and_reset():
     """三个任务都能构建 + 多 seed reset 后物体落稳。"""
     from envs import ALL_TASKS, G1TaskEnv
-    from datasets.spec import OBS_SPEC
+    from mujoco_datasets.spec import OBS_SPEC
 
     for task in ALL_TASKS:
         env = G1TaskEnv(task)
@@ -58,8 +58,8 @@ def test_recorder_roundtrip():
     """录制一回合 -> 读回 -> 字段形状/内容自洽。"""
     from envs import ALL_TASKS, G1TaskEnv
     from control.expert import PickPlaceExpert
-    from datasets.recorder import EpisodeRecorder
-    from datasets.spec import ACTION_SPEC, OBS_SPEC
+    from mujoco_datasets.recorder import EpisodeRecorder
+    from mujoco_datasets.spec import ACTION_SPEC, OBS_SPEC
 
     with tempfile.TemporaryDirectory() as tmp:
         rec = EpisodeRecorder(tmp, "task1_pick_place")

@@ -54,7 +54,8 @@ mjpython scripts/demo_tasks.py 1
     任务4策略推理三处复用）
   - `expert.py` — `PickPlaceExpert` 脚本专家：路点 IK + 关节插值 + 伺服修正；
     task1 成功率 30/30；构造参数来自 `Task.expert_spec()`
-- `datasets/` — 数据层（任务三，Python 包）
+- `mujoco_datasets/` — 数据层（任务三，Python 包；避免与 Hugging Face
+  `datasets` 包同名）
   - `spec.py` — `OBS_SPEC`/`ACTION_SPEC`：观测（双相机 224 RGB + 10 维 proprio：
     腰yaw+右臂7+双指2）、
     动作标签（ee_xyz + gripper, 4 维 @20Hz）的唯一契约

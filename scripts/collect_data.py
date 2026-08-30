@@ -8,7 +8,7 @@
   episodes/ 每回合一个 npz、videos/ 同名 mp4、manifest.jsonl 索引、
   norm_stats.json 归一化统计；失败回合 npz+视频成对归档到 failures/
   （无失败不建该目录）。
-采样规格见 datasets/spec.py：20Hz，动作 = ee_xyz + 夹爪开度（4 维）。
+采样规格见 mujoco_datasets/spec.py：20Hz，动作 = ee_xyz + 夹爪开度（4 维）。
 """
 
 import argparse
@@ -21,8 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from envs import ALL_TASKS, G1TaskEnv
 from control.expert import PickPlaceExpert
-from datasets.recorder import EpisodeRecorder
-from datasets.spec import ACTION_SPEC
+from mujoco_datasets.recorder import EpisodeRecorder
+from mujoco_datasets.spec import ACTION_SPEC
 
 
 def collect(task_id: int, episodes: int, version: str, seed0: int, seeds=None):
