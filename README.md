@@ -2,7 +2,7 @@
 
 A LIBERO-style manipulation playground for a Unitree G1 humanoid in MuJoCo:
 scripted-expert task environments, model-free control, a demonstration data
-pipeline, and (planned) VLA policy inference.
+pipeline, and zero-shot OpenVLA policy inference.
 
 ## Quick reference
 
@@ -19,6 +19,13 @@ python scripts/check_data.py --task task1_pick_place --version v1
 
 # interactive task viewer
 mjpython scripts/demo_tasks.py 2
+
+# OpenVLA: short closed-loop smoke rollout
+python scripts/eval_openvla.py --seeds 100 --max-actions 120
+
+# OpenVLA: held-out evaluation with results in a named run directory
+python scripts/eval_openvla.py --seeds 0-4 --max-actions 120 \
+  --run-name openvla_seeds_0_4
 ```
 
 Task argument conventions: `run_expert` / `collect_data` take a numeric id
@@ -44,6 +51,8 @@ scripts/run_expert.py    evaluate the scripted expert (control quality)
 scripts/collect_data.py  collect demonstration episodes (task 3)
 scripts/check_data.py    inspect + replay-verify the dataset
 scripts/demo_tasks.py    interactive task viewer (mjpython)
+scripts/check_openvla.py inspect one OpenVLA prediction without executing it
+scripts/eval_openvla.py  run and score zero-shot OpenVLA rollouts
 ```
 
 ### 1. Evaluate the expert
@@ -119,6 +128,59 @@ Flags: `--replay all` (default; `0` skips, `N` replays first N) and
 mjpython scripts/demo_tasks.py 2          # cycle random variants of task 2
 ```
 
+### 5. Evaluate OpenVLA zero-shot
+
+OpenVLA uses the overhead RGB image and language instruction only. Its LIBERO
+7D delta action is mapped to a bounded Cartesian target while the existing IK
+controller keeps the gripper orientation vertically downward.
+
+```bash
+# One real MuJoCo frame -> one model action, without moving the robot
+python scripts/check_openvla.py --seed 100
+
+# Short closed-loop safety smoke test
+python scripts/eval_openvla.py --seeds 100 --max-actions 10
+
+# Held-out evaluation
+python scripts/eval_openvla.py --seeds 100-119 --max-actions 120 \
+  --run-name heldout_seeds_100_119
+```
+
+Each invocation writes its summary, episode CSV, per-step JSON logs and videos
+under a separate `data/openvla_eval/<run_name>/` directory. If `--run-name` is
+omitted, a name such as
+`run_20260830_142155_seeds_100-119_scale_0p02` is generated from the timestamp,
+seeds and action scale. Existing run directories are never overwritten; choose
+a new `--run-name` when repeating an experiment.
+
+```text
+data/openvla_eval/
+└── heldout_seeds_100_119/
+    ├── summary.json       # aggregate success/lift/reach, IK, clipping, latency
+    ├── episodes.csv       # one summary row per seed
+    ├── seed_100.json      # raw/model-adapted actions and state per timestep
+    ├── seed_100.mp4       # overhead + wrist rollout video
+    ├── seed_101.json
+    └── seed_101.mp4
+```
+
+OpenVLA does not output an absolute target in meters. It outputs a normalized
+LIBERO controller command `[dx, dy, dz, droll, dpitch, dyaw, gripper]`. For the
+current top-down pick-and-place task, the adapter applies the following mapping:
+
+```text
+delta_xyz_m = 0.02 * [dx, dy, dz]
+target_xyz  = current_ee_xyz + delta_xyz_m
+```
+
+Thus a translation component of `+1.0` requests `+2 cm` along that axis. The
+length of the combined 3D step is capped at `2.5 cm`, and the resulting target
+is clipped to the G1's tested reachable workspace. Model-predicted rotation is
+ignored because the existing IK controller keeps the gripper vertically
+downward throughout this task. Finally, OpenVLA uses `gripper=1` for open and
+`gripper=0` for closed, while this environment uses `1=close`; the adapter
+therefore inverts and binarizes the gripper command.
+
 ## Current dataset versions
 
 | dataset | version | notes |
@@ -134,8 +196,9 @@ omitted waist yaw.
 
 ```
 envs/      task environments (robot, scene, tasks/) — physics & observations
-control/   ik.py / servo.py / executor.py / expert.py — how to move
+control/   IK / servo / executor / OpenVLA action adapter — how to move
 mujoco_datasets/  spec.py / recorder.py — data contract & recording
+policies/  learned-policy wrappers (OpenVLA)
 scripts/   thin CLI wrappers (collect / check / evaluate / demo)
 data/      datasets, videos, previews (gitignored)
 ```

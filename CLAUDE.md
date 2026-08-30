@@ -54,6 +54,10 @@ mjpython scripts/demo_tasks.py 1
     任务4策略推理三处复用）
   - `expert.py` — `PickPlaceExpert` 脚本专家：路点 IK + 关节插值 + 伺服修正；
     task1 成功率 30/30；构造参数来自 `Task.expert_spec()`
+  - `openvla_action_adapter.py` — OpenVLA LIBERO 7D delta action 到安全 4D
+    absolute ee_xyz + gripper action 的映射；模型旋转输出不用于当前竖直顶抓任务
+- `policies/` — 任务四学习策略接入
+  - `openvla_policy.py` — OpenVLA LIBERO-Spatial checkpoint 的 MPS/CPU 推理包装
 - `mujoco_datasets/` — 数据层（任务三，Python 包；避免与 Hugging Face
   `datasets` 包同名）
   - `spec.py` — `OBS_SPEC`/`ACTION_SPEC`：观测（双相机 224 RGB + 10 维 proprio：
