@@ -68,9 +68,10 @@ def run_episode(env, policy, adapter, seed: int, max_actions: int, out_dir: Path
             adapted = adapter.convert(raw7, env.ee_xpos())
             ik_ok = executor.step(adapted.action4)
             obs = env.get_obs()
-            writer.append_data(np.concatenate(
-                [obs["overhead_rgb"], obs["wrist_rgb"]], axis=1
-            ))
+            images = [obs["overhead_rgb"]]
+            if "wrist_rgb" in obs:
+                images.append(obs["wrist_rgb"])
+            writer.append_data(np.concatenate(images, axis=1))
             success = env.is_success()
             cube = env.obj_xpos("cube")
             pad = env.obj_xpos("target_pad")

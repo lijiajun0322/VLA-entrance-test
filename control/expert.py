@@ -203,3 +203,12 @@ class PickPlaceExpert:
             if self.done:
                 break
         return self._phase()
+
+
+def make_expert(env, task):
+    """按 Task.expert_spec() 选择对应的 scripted expert。"""
+    spec = task.expert_spec()
+    if spec.get("kind") == "sliding_door":
+        from .door_expert import OpenSlidingDoorExpert
+        return OpenSlidingDoorExpert(env, spec)
+    return PickPlaceExpert(env, spec)

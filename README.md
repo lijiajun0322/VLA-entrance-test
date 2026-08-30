@@ -19,6 +19,7 @@ python scripts/check_data.py --task task1_pick_place --version v1
 
 # interactive task viewer
 mjpython scripts/demo_tasks.py 2
+mjpython scripts/demo_tasks.py 3                 # sliding cabinet door
 
 # OpenVLA: short closed-loop smoke rollout
 python scripts/eval_openvla.py --seeds 100 --max-actions 120
@@ -54,6 +55,12 @@ scripts/demo_tasks.py    interactive task viewer (mjpython)
 scripts/check_openvla.py inspect one OpenVLA prediction without executing it
 scripts/eval_openvla.py  run and score zero-shot OpenVLA rollouts
 ```
+
+Task difficulty increases from single-object pick-and-place (Task 1), through
+language-conditioned object selection (Task 2), to opening a constrained
+articulated sliding cabinet door through sustained handle contact (Task 3).
+Task 3 randomizes the complete window/frame assembly by up to 2.5 cm in x and
+2.0 cm in y, in addition to its initial gap, colors, and language variant.
 
 ### 1. Evaluate the expert
 
@@ -113,7 +120,8 @@ One command, full batch:
 - summary stats + per-episode replay lines
   `"instruction" | episode_XXXX | success | inspect/replay_XXXX.mp4`
 - `inspect/montage_episode_XXXX.png` — keyframe strip per episode
-  (top: overhead cam, bottom: wrist cam, time left to right)
+  (one row per recorded camera, time left to right). Task 1/2 record overhead
+  and wrist cameras; Task 3 records only the shoulder-view `door_cam`.
 - `inspect/trajectory.png` — ee trajectories + gripper opening
 - `inspect/replay_episode_XXXX.mp4` — re-execution from the recorded action
   labels (deployment path preview for task 4; compare against `videos/` to see

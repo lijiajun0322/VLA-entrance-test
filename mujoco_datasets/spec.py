@@ -34,6 +34,19 @@ OBS_SPEC = ObsSpec(
     proprio_dim=10,
 )
 
+DEFAULT_CAMERA_MAP = {
+    "overhead_rgb": "overhead_cam",
+    "wrist_rgb": "wrist_cam",
+}
+TASK_CAMERA_MAPS = {
+    # Task 3 只使用远距离机器人肩后主视角，不录腕部相机。
+    "task3_open_sliding_door": {"overhead_rgb": "door_cam"},
+}
+
+
+def camera_map_for_task(task_name: str) -> dict:
+    return dict(TASK_CAMERA_MAPS.get(task_name, DEFAULT_CAMERA_MAP))
+
 # 动作标签 = ee_site 世界坐标(3) + 夹爪开度(1)。
 # 夹爪全程竖直朝下（姿态恒定），故 4 维即完整动作；推理时用
 # control.CartesianServo 跟踪 ee 目标即可驱动仿真（无需完整 IK）。

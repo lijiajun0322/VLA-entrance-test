@@ -1,14 +1,14 @@
 """回合录制器：把专家跑出的轨迹存成可训练的数据集。
 
 每帧记录三块内容（规格见 mujoco_datasets/spec.py）：
-  观测   overhead_rgb / wrist_rgb (JPEG 压缩)、proprio (10：腰yaw+右臂7+双指2)
+  观测   任务相机 RGB（Task 1/2 双相机，Task 3 单相机）+ proprio(10)
   标签   action = [ee_x, y, z, gripper] (4) —— VLA 的监督信号
   备份   ctrl (10 = 腰+右臂8 + 双指2, 关节目标) —— 可离线转成其他动作空间
   元数据 phase、上帝视角 task_info（分析用，绝不进模型）
 
 存储布局（一回合三件套，npz + mp4 同名对应）：
   out_dir/episodes/episode_0000.npz   逐帧数据
-  out_dir/videos/episode_0000.mp4     双相机并排视频（20fps，与采样同频）
+  out_dir/videos/episode_0000.mp4     一个或多个相机横排视频（20fps）
   out_dir/manifest.jsonl              索引，一回合一行
   out_dir/norm_stats.json             proprio/action 的均值方差（训练归一化用）
   out_dir/failures/                   失败回合（npz+视频成对归档；无失败不建此目录）
@@ -45,13 +45,14 @@ def sample_action(env) -> np.ndarray:
     return np.concatenate([env.ee_xpos(), [gripper]])
 
 
-def _compose(overhead: np.ndarray, wrist: np.ndarray, caption: str) -> np.ndarray:
-    """双相机横排 + 左上角阶段字幕，与 scripts/check_data.py 的版式一致。"""
-    img = Image.fromarray(overhead)
+def _compose(images: list[np.ndarray], caption: str) -> np.ndarray:
+    """一个或多个相机横排 + 左上角阶段字幕。"""
+    img = Image.fromarray(images[0])
     strip = Image.new("RGB", (img.width, 22), (0, 0, 0))
     ImageDraw.Draw(strip).text((6, 5), caption[:70], fill=(255, 255, 255))
     img.paste(strip, (0, 0))
-    return np.concatenate([np.array(img), wrist], axis=1)
+    images[0] = np.array(img)
+    return np.concatenate(images, axis=1)
 
 
 class EpisodeRecorder:
@@ -83,6 +84,8 @@ class EpisodeRecorder:
         self._seed = seed
         self._instruction = env.instruction
         self._task_info = env.task_info()
+        self._camera_map = dict(env.obs_camera_map)
+        self._image_keys = list(self._camera_map)
         self._video_path = self.out_dir / "videos" / f"episode_{self._ep_id:04d}.mp4"
         self._writer = imageio.get_writer(self._video_path,
                                           fps=ACTION_SPEC.control_hz,
@@ -91,18 +94,19 @@ class EpisodeRecorder:
     def sample(self, env, phase: str = ""):
         """专家每走 sample_every 步调一次（建议在 collect_data 里计数）。"""
         obs = env.get_obs()
-        self._frames.append({
-            "overhead_rgb": _jpeg(obs["overhead_rgb"]),
-            "wrist_rgb": _jpeg(obs["wrist_rgb"]),
+        frame = {
             "proprio": obs["proprio"].astype(np.float32),
             "action": sample_action(env).astype(np.float32),
             "ctrl": env.data.ctrl[np.concatenate([
                 env.arm8_act_ids, env.grip_act_ids])].astype(np.float32),
             "phase": phase,
             "sim_t": float(env.data.time),
-        })
-        self._writer.append_data(_compose(obs["overhead_rgb"], obs["wrist_rgb"],
-                                          f"[{phase}] {self._instruction}"))
+        }
+        for key in self._image_keys:
+            frame[key] = _jpeg(obs[key])
+        self._frames.append(frame)
+        self._writer.append_data(_compose(
+            [obs[key] for key in self._image_keys], f"[{phase}] {self._instruction}"))
 
     def end(self, success: bool) -> Path | None:
         """回合结束。成功入正集（episodes/ + videos/）；
@@ -120,7 +124,7 @@ class EpisodeRecorder:
             "n_frames": n,
             "seed": self._seed if self._seed is not None else -1,
         }
-        for key in ("overhead_rgb", "wrist_rgb"):
+        for key in self._image_keys:
             data[key] = np.array([f[key] for f in self._frames], dtype=object)
         for key in ("proprio", "action", "ctrl", "sim_t"):
             data[key] = np.stack([f[key] for f in self._frames])
@@ -143,6 +147,7 @@ class EpisodeRecorder:
             "n_frames": n, "success": success,
             "instruction": self._instruction, "task": self.task_name,
             "seed": self._seed,
+            "cameras": self._camera_map,
         }
         self._manifest.append(entry)
         with open(self.out_dir / "manifest.jsonl", "a") as f:
@@ -166,7 +171,8 @@ class EpisodeRecorder:
             "action_mean": a.mean(0).tolist(), "action_std": a.std(0).tolist(),
             "n_episodes": len(self._proprio_all),
             "n_frames": int(p.shape[0]),
-            "obs_spec": {"cameras": list(OBS_SPEC.cameras),
+            "obs_spec": {"cameras": list(self._camera_map.values()),
+                         "image_keys": self._image_keys,
                          "img_size": OBS_SPEC.img_size,
                          "proprio_dim": OBS_SPEC.proprio_dim},
             "action_spec": {"names": list(ACTION_SPEC.names),

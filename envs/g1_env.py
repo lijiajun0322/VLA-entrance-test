@@ -18,7 +18,7 @@ from .robot import build_g1_arm_spec, RIGHT_ARM_JOINTS, LEFT_ARM_JOINTS, LEFT_AR
 from . import scene as sb
 from .tasks.base import Task
 from control.ik import IK_JOINTS, HOME_POSE
-from mujoco_datasets.spec import OBS_SPEC
+from mujoco_datasets.spec import OBS_SPEC, camera_map_for_task
 
 SETTLE_STEPS = 300      # reset 后让物体落稳的步数 (0.002s * 300 = 0.6s)
 
@@ -60,9 +60,10 @@ class G1TaskEnv:
         self.proprio_adr = np.array(
             [self.model.jnt_qposadr[mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, j)]
              for j in proprio_joints])
-        # 相机 id
+        # Task 1/2 为 overhead+wrist；Task 3 只保留 door_cam 主视角。
+        self.obs_camera_map = camera_map_for_task(task.name)
         self.cam_ids = {n: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, n)
-                        for n in OBS_SPEC.cameras}
+                        for n in self.obs_camera_map.values()}
         self._renderer = mujoco.Renderer(self.model, OBS_SPEC.img_size, OBS_SPEC.img_size)
         # 重力补偿作用的 dof：所有非 freejoint（机器人铰链/滑动关节）。
         # 物体的 freejoint 绝不能补——否则物体失去重力飘起来。
@@ -151,6 +152,24 @@ class G1TaskEnv:
         bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
         self.data.mocap_pos[self.model.body_mocapid[bid]] = pos
 
+    def joint_qpos(self, name: str) -> float:
+        jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        return float(self.data.qpos[self.model.jnt_qposadr[jid]])
+
+    def joint_qvel(self, name: str) -> float:
+        jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        return float(self.data.qvel[self.model.jnt_dofadr[jid]])
+
+    def set_joint_qpos(self, name: str, value: float):
+        """任务 reset 专用：设置标量 hinge/slide joint 的初始位置。"""
+        jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        self.data.qpos[self.model.jnt_qposadr[jid]] = value
+
+    def set_body_base_pos(self, name: str, pos):
+        """任务 reset 专用：设置直接挂在 worldbody 下的模型基座位置。"""
+        bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
+        self.model.body_pos[bid] = pos
+
     def set_geom_rgba(self, geom_name: str, rgba):
         gid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
         self.model.geom_rgba[gid] = rgba
@@ -162,13 +181,14 @@ class G1TaskEnv:
         return self._renderer.render().copy()
 
     def get_obs(self) -> dict:
-        """VLA 训练需要的观测（规格见 data/spec.py）：双相机 RGB + 本体感知 + 指令。"""
-        return {
-            "overhead_rgb": self._render("overhead_cam"),
-            "wrist_rgb": self._render("wrist_cam"),
+        """VLA 观测；图像字段由任务的 obs_camera_map 决定。"""
+        obs = {
             "proprio": self.data.qpos[self.proprio_adr].copy(),
             "instruction": self.instruction,
         }
+        for image_key, camera_name in self.obs_camera_map.items():
+            obs[image_key] = self._render(camera_name)
+        return obs
 
     def is_success(self) -> bool:
         return self.task.is_success(self)

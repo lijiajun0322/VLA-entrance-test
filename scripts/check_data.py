@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def load_episode(path: Path) -> dict:
     d = np.load(path, allow_pickle=True)
     out = {k: d[k] for k in d.files}
-    for key in ("overhead_rgb", "wrist_rgb"):
+    for key in (k for k in d.files if k.endswith("_rgb")):
         out[key] = [np.array(Image.open(io.BytesIO(bytes(b)))) for b in d[key]]
     return out
 
@@ -60,13 +60,14 @@ def make_montages(out_dir, manifest, n_frames=8):
     for e in manifest:
         ep = load_episode(out_dir / e["episode"])
         idx = np.linspace(0, len(ep["action"]) - 1, n_frames).astype(int)
-        strip = np.concatenate([ep["overhead_rgb"][i] for i in idx], axis=1)
-        strip_w = np.concatenate([ep["wrist_rgb"][i] for i in idx], axis=1)
-        img = np.concatenate([strip, strip_w], axis=0)
+        image_keys = [k for k in ep if k.endswith("_rgb")]
+        rows = [np.concatenate([ep[key][i] for i in idx], axis=1)
+                for key in image_keys]
+        img = np.concatenate(rows, axis=0)
         stem = Path(e["episode"]).stem
         Image.fromarray(img).save(out_dir / "inspect" / f"montage_{stem}.png")
     print(f"montage: inspect/montage_episode_*.png x{len(manifest)} "
-          f"(top=overhead, bottom=wrist, time left to right)")
+          f"(one row per camera, time left to right)")
 
 
 def plot_trajectory(out_dir, manifest):
@@ -108,7 +109,7 @@ def replay_check(out_dir, manifest, task_name: str, n: int, video: bool):
     env = G1TaskEnv(TASKS[task_name]())
     renderer = None
     cam_ids = {name: mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_CAMERA, name)
-               for name in ("overhead_cam", "wrist_cam")} if video else None
+               for name in env.obs_camera_map.values()} if video else None
     if video:
         renderer = mujoco.Renderer(env.model, 224, 224)
         (out_dir / "inspect").mkdir(exist_ok=True)
@@ -116,7 +117,7 @@ def replay_check(out_dir, manifest, task_name: str, n: int, video: bool):
     def compose(instruction, t) -> np.ndarray:
         from PIL import ImageDraw
         frames = []
-        for cam in ("overhead_cam", "wrist_cam"):
+        for cam in env.obs_camera_map.values():
             renderer.update_scene(env.data, camera=cam_ids[cam])
             frames.append(renderer.render())
         img = Image.fromarray(frames[0])

@@ -20,6 +20,7 @@ import mujoco
 import mujoco.viewer
 
 from envs import ALL_TASKS, G1TaskEnv
+from envs.scene import configure_viewer_camera
 
 VARIANT_SECONDS = 4.0
 
@@ -35,6 +36,7 @@ def main():
         env = G1TaskEnv(task)
         print(f"\n=== {task.name} ===")
         with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
+            configure_viewer_camera(viewer, env.model, task.name)
             for variant in range(n_variants):
                 env.reset()
                 mujoco.mj_forward(env.model, env.data)

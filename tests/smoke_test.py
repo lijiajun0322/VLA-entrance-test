@@ -27,8 +27,10 @@ def test_build_and_reset():
         env = G1TaskEnv(task)
         for seed in range(3):
             obs = env.reset(seed)
-            assert obs["overhead_rgb"].shape == (OBS_SPEC.img_size,) * 2 + (3,)
-            assert obs["wrist_rgb"].shape == (OBS_SPEC.img_size,) * 2 + (3,)
+            image_keys = {k for k in obs if k.endswith("_rgb")}
+            assert image_keys == set(env.obs_camera_map)
+            for key in image_keys:
+                assert obs[key].shape == (OBS_SPEC.img_size,) * 2 + (3,)
             assert obs["proprio"].shape == (OBS_SPEC.proprio_dim,)
             assert len(obs["instruction"]) > 10
             info = env.task_info()
@@ -52,6 +54,24 @@ def test_expert_task1(rate_threshold=0.8):
     rate = wins / n
     assert rate >= rate_threshold, f"专家成功率 {rate:.0%} < {rate_threshold:.0%}"
     print(f"  [ok] task1 专家成功率 {wins}/{n}")
+
+
+def test_expert_task3(rate_threshold=0.8):
+    """task3 横拉门专家成功率 >= 80%（基线 100%）。"""
+    from envs import ALL_TASKS, G1TaskEnv
+    from control.expert import make_expert
+
+    task = ALL_TASKS[2]
+    env = G1TaskEnv(task)
+    wins, n = 0, 5
+    for seed in range(n):
+        env.reset(seed)
+        expert = make_expert(env, task)
+        expert.run()
+        wins += env.is_success()
+    rate = wins / n
+    assert rate >= rate_threshold, f"横拉门专家成功率 {rate:.0%} < {rate_threshold:.0%}"
+    print(f"  [ok] task3 横拉门专家成功率 {wins}/{n}")
 
 
 def test_recorder_roundtrip():
@@ -106,6 +126,7 @@ if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     tests = {"build": test_build_and_reset,
              "expert": test_expert_task1,
+             "door": test_expert_task3,
              "recorder": test_recorder_roundtrip}
     names = tests if which == "all" else {which: tests[which]}
     print("冒烟测试:")

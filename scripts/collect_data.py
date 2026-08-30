@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from envs import ALL_TASKS, G1TaskEnv
-from control.expert import PickPlaceExpert
+from control.expert import make_expert
 from mujoco_datasets.recorder import EpisodeRecorder
 from mujoco_datasets.spec import ACTION_SPEC
 
@@ -41,7 +41,7 @@ def collect(task_id: int, episodes: int, version: str, seed0: int, seeds=None):
             break
         env.reset(seed)
         rec.start(env, seed=seed)
-        expert = PickPlaceExpert(env, task.expert_spec())
+        expert = make_expert(env, task)
         i = 0
         while not expert.done:
             expert.step()

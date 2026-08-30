@@ -83,6 +83,11 @@ def add_world(spec: "mujoco.MjSpec"):
     wb.add_camera(name="overhead_cam", pos=OVERHEAD_CAM_POS,
                   xyaxes=quat_look_at(OVERHEAD_CAM_POS, OVERHEAD_CAM_LOOK_AT),
                   fovy=OVERHEAD_CAM_FOVY)
+    # Task 3 数据相机：与交互 viewer 的初始肩后视角一致。
+    door_cam_pos = [0.0, 0.25, 1.40]
+    door_cam_look_at = [0.38, -0.14, 0.83]
+    wb.add_camera(name="door_cam", pos=door_cam_pos,
+                  xyaxes=quat_look_at(door_cam_pos, door_cam_look_at), fovy=45)
 
     # 腕部相机：装在掌板上，沿掌 +x（接近方向）看手指和工作区。
     # 注意 MuJoCo 相机沿自身 -z 看：xyaxes 的 x=(0,-1,0), y=(0,0,1)
@@ -135,6 +140,92 @@ def add_pad(spec: "mujoco.MjSpec", name: str, rgba,
     body.add_site(name=f"{name}_site", size=[0.0001] * 3,
                   rgba=[0, 0, 0, 0])  # 透明，不渲染
     return body
+
+
+def add_sliding_door(spec: "mujoco.MjSpec", name: str = "sliding_door"):
+    """添加一扇沿世界 +y 横向滑动的双扇窗（Meta-World window-open 风格）。"""
+    frame = spec.worldbody.add_body(name=f"{name}_frame")
+    frame_rgba = [0.30, 0.22, 0.20, 1]
+    for suffix, pos, size in (
+        # 外框在后轨，活动扇在 x=0.365 的前轨；两者 x 方向留 6mm 净空。
+        ("left",  [0.395, -0.295, 0.83], [0.012, 0.015, 0.105]),
+        ("right", [0.395,  0.015, 0.83], [0.012, 0.015, 0.105]),
+        ("top",   [0.395, -0.140, 0.94], [0.012, 0.170, 0.015]),
+        ("base",  [0.395, -0.140, 0.735], [0.012, 0.170, 0.010]),
+    ):
+        frame.add_geom(name=f"{name}_frame_{suffix}",
+                       type=mujoco.mjtGeom.mjGEOM_BOX,
+                       pos=pos, size=size, rgba=frame_rgba,
+                       friction=[0.8, 0.005, 0.0001])
+
+    # 右侧固定窗扇位于后轨。半透明窗格仅用于视觉，不遮住打开后的左侧洞口。
+    # 与 Meta-World 的 window-open 一样，活动窗扇滑向固定窗扇并与其重叠。
+    fixed_y = -0.0625
+    frame.add_geom(name=f"{name}_fixed_glass",
+                   type=mujoco.mjtGeom.mjGEOM_BOX,
+                   pos=[0.397, fixed_y, 0.83], size=[0.004, 0.0675, 0.080],
+                   rgba=[0.45, 0.62, 0.68, 0.22],
+                   contype=0, conaffinity=0, mass=0)
+    for suffix, pos, size in (
+        ("fixed_left",   [0.397, -0.130, 0.83], [0.008, 0.007, 0.090]),
+        ("fixed_right",  [0.397,  0.005, 0.83], [0.008, 0.007, 0.090]),
+        ("fixed_top",    [0.397, fixed_y, 0.92], [0.008, 0.0745, 0.008]),
+        ("fixed_bottom", [0.397, fixed_y, 0.74], [0.008, 0.0745, 0.008]),
+    ):
+        frame.add_geom(name=f"{name}_{suffix}",
+                       type=mujoco.mjtGeom.mjGEOM_BOX,
+                       pos=pos, size=size, rgba=frame_rgba,
+                       contype=0, conaffinity=0, mass=0)
+
+    # q=0 时活动窗扇覆盖左侧开口；q 增大时向 +y 滑到固定窗扇前方。
+    # 两扇各宽约 15cm，因此需要 15cm 行程才能基本露出整个左侧洞口。
+    door = spec.worldbody.add_body(name=name, pos=[0.365, -0.205, 0.83])
+    door.add_joint(name=f"{name}_joint", type=mujoco.mjtJoint.mjJNT_SLIDE,
+                   axis=[0, 1, 0], range=[0.0, 0.15],
+                   # 低静摩擦避免夹爪蓄力后门扇突然跳动；阻尼负责平顺停车。
+                   damping=1.5, frictionloss=0.15, armature=0.01)
+    door.add_geom(name=f"{name}_panel", type=mujoco.mjtGeom.mjGEOM_BOX,
+                  # 碰撞窗板比可见窗框略窄：否则 q>13cm 时右缘会顶住外框立柱。
+                  size=[0.012, 0.068, 0.080], mass=0.8,
+                  rgba=[0.25, 0.45, 0.75, 0.28],
+                  friction=[0.9, 0.005, 0.0001])
+    # 活动窗扇边框随 slide joint 一起移动；无碰撞，避免改变已验证的抓取动力学。
+    for suffix, pos, size in (
+        ("moving_left",   [0.0, -0.075, 0.0], [0.014, 0.007, 0.090]),
+        ("moving_right",  [0.0,  0.075, 0.0], [0.014, 0.007, 0.090]),
+        ("moving_top",    [0.0,  0.0, 0.09], [0.014, 0.082, 0.008]),
+        ("moving_bottom", [0.0,  0.0, -0.09], [0.014, 0.082, 0.008]),
+    ):
+        door.add_geom(name=f"{name}_{suffix}",
+                      type=mujoco.mjtGeom.mjGEOM_BOX,
+                      pos=pos, size=size, rgba=frame_rgba,
+                      contype=0, conaffinity=0, mass=0)
+    # 把手向机器人方向(-x)突出；留足掌板净空，避免拉到后段时掌部磨窗板。
+    door.add_geom(name=f"{name}_handle", type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+                  pos=[-0.055, 0.0, 0.0], size=[0.012, 0.040, 0.0],
+                  mass=0.08, rgba=[0.92, 0.55, 0.12, 1],
+                  friction=[1.8, 0.005, 0.0001], solref=[0.004, 1.0])
+    door.add_site(name=f"{name}_handle_site", pos=[-0.055, 0.0, 0.0],
+                  size=[0.0001] * 3, rgba=[0, 0, 0, 0])
+    return door
+
+
+def configure_viewer_camera(viewer, model, task_name: str):
+    """设置交互 viewer 的初始自由视角，设置后仍可用鼠标旋转/平移/缩放。"""
+    viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+    viewer.cam.fixedcamid = -1
+    if task_name == "task3_open_sliding_door":
+        # 机器人左肩上方看向窗户；比原视角更远，完整显示窗框和右臂。
+        viewer.cam.lookat[:] = [0.38, -0.14, 0.83]
+        viewer.cam.distance = 0.79
+        viewer.cam.azimuth = -45.7
+        viewer.cam.elevation = -46.3
+    else:
+        # 精确复现数据采集 overhead_cam 的斜侧俯视构图。
+        viewer.cam.lookat[:] = OVERHEAD_CAM_LOOK_AT
+        viewer.cam.distance = 0.842
+        viewer.cam.azimuth = -152.4
+        viewer.cam.elevation = -32.3
 
 
 def table_pos(x: float, y: float, clearance: float = 0.03) -> list:

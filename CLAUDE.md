@@ -40,13 +40,14 @@ mjpython scripts/demo_tasks.py 1
 - `envs/` — LIBERO 风格任务环境（VLA 入门测试任务一）
   - `robot.py` — MjSpec 程序化改造 G1：固定基座（删 freejoint，骨盆 z=0.787）、
     全部力矩电机换成位置伺服、右腕挂两指平行夹爪（`ee_site` 为末端点）
-  - `scene.py` — 地板/桌子(高0.72m)/灯光/相机(`overhead_cam`,`wrist_cam`)、
+  - `scene.py` — 地板/桌子(高0.72m)/灯光/相机(`overhead_cam`,`wrist_cam`,
+    task3 单独使用的 `door_cam`)、
     物体与目标垫(mocap)工具函数、工作区采样（工作区经关节限位约束 IK 实测可达）
   - `g1_env.py` — `G1TaskEnv`：reset(seed) 随机化、get_obs()（按 data/spec.py 规格）、
     set_arm8/set_gripper 控制接口、is_success、task_info（上帝视角元数据）
   - `tasks/` — 任务定义（base.py 为 Task ABC，含 expert_spec()/info() 接口）
-    `task1_pick_place.py` / `task2_pick_by_type.py` / `task3.py`
-    （抓放 → 按形状颜色挑选 → 叠放[占位，玩法待定]），各自带文本指令与随机化
+    `task1_pick_place.py` / `task2_pick_by_type.py` / `task3_open_sliding_door.py`
+    （抓放 → 按类型挑选 → 横向滑开带约束柜门），各自带文本指令与随机化
 - `control/` — 控制层（任务二"无模型控制"）
   - `ik.py` — `solve_ik()`：限位约束 + 多随机重启的离线 IK（腰yaw+右臂 8 自由度，
     夹爪竖直朝下）；`HOME_POSE` 初始姿态
@@ -54,14 +55,16 @@ mjpython scripts/demo_tasks.py 1
     任务4策略推理三处复用）
   - `expert.py` — `PickPlaceExpert` 脚本专家：路点 IK + 关节插值 + 伺服修正；
     task1 成功率 30/30；构造参数来自 `Task.expert_spec()`
+  - `door_expert.py` — `OpenSlidingDoorExpert`：从上方夹住竖直把手，沿 slide
+    joint 分阶段横拉；task3 基线成功率 10/10
   - `openvla_action_adapter.py` — OpenVLA LIBERO 7D delta action 到安全 4D
     absolute ee_xyz + gripper action 的映射；模型旋转输出不用于当前竖直顶抓任务
 - `policies/` — 任务四学习策略接入
   - `openvla_policy.py` — OpenVLA LIBERO-Spatial checkpoint 的 MPS/CPU 推理包装
 - `mujoco_datasets/` — 数据层（任务三，Python 包；避免与 Hugging Face
   `datasets` 包同名）
-  - `spec.py` — `OBS_SPEC`/`ACTION_SPEC`：观测（双相机 224 RGB + 10 维 proprio：
-    腰yaw+右臂7+双指2）、
+  - `spec.py` — `OBS_SPEC`/`ACTION_SPEC`：观测（task1/2 双相机、task3 单相机，
+    224 RGB + 10 维 proprio：腰yaw+右臂7+双指2）、
     动作标签（ee_xyz + gripper, 4 维 @20Hz）的唯一契约
   - `recorder.py` — `EpisodeRecorder`：逐帧录 obs/action/ctrl/元数据，npz + manifest
     + 归一化统计；失败回合归档到 failures/
