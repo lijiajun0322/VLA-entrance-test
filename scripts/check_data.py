@@ -1,10 +1,10 @@
 """Inspect and replay-check a directly recorded LeRobot v3 dataset.
 
-    python scripts/check_data.py --task task1_pick_place --version lerobot_v0
-    python scripts/check_data.py --task task1_pick_place --version lerobot_v0 --replay 1
+    python scripts/check_data.py --dataset task1_pick_place --version lerobot_v0
+    python scripts/check_data.py --dataset task1_pick_place --version lerobot_v0 --replay 1
 
 Outputs montages, delta/cumulative trajectories, and optional replay videos to
-``data/<task>/<version>/inspect``.
+``data/<dataset>/<version>/inspect``.
 """
 
 from __future__ import annotations
@@ -27,13 +27,13 @@ warnings.filterwarnings(
 )
 
 
-def load_dataset(task: str, version: str):
+def load_dataset(dataset_name: str, version: str):
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    root = ROOT / "data" / task / version
+    root = ROOT / "data" / dataset_name / version
     if not (root / "meta" / "info.json").exists():
         raise FileNotFoundError(f"not a LeRobot v3 dataset: {root}")
-    repo_id = f"local/{task}"
+    repo_id = f"local/{dataset_name}"
     # torchcodec is installed as a LeRobot dependency but may not find shared
     # Homebrew FFmpeg dylibs on macOS; PyAV is already available and reliable.
     return root, LeRobotDataset(repo_id, root=root, video_backend="pyav")
@@ -153,18 +153,19 @@ def replay_check(root: Path, ds, groups, task_name: str, n: int, video: bool):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--task", default="task1_pick_place")
+    ap.add_argument("--dataset", default="task1_pick_place",
+                    help="first-level dataset directory under data/")
     ap.add_argument("--version", default="lerobot_v0")
     ap.add_argument("--replay", default="all",
                     help="all / 0 / first N episodes")
     ap.add_argument("--no-video", dest="video", action="store_false")
     args = ap.parse_args()
 
-    root, dataset = load_dataset(args.task, args.version)
+    root, dataset = load_dataset(args.dataset, args.version)
     groups = episode_indices(dataset)
     show_summary(dataset, groups)
     make_montages(root, dataset, groups)
     plot_trajectory(root, dataset, groups)
     n = len(groups) if args.replay == "all" else int(args.replay)
     if n:
-        replay_check(root, dataset, groups, args.task, n, args.video)
+        replay_check(root, dataset, groups, args.dataset, n, args.video)

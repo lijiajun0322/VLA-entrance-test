@@ -1,6 +1,6 @@
 """Inspect and delta-replay the lightweight NPZ dataset backend.
 
-    python scripts/check_data_npz.py --task task1_pick_place --version npz_v0
+    python scripts/check_data_npz.py --dataset task1_pick_place --version npz_v0
 """
 
 import argparse
@@ -97,12 +97,13 @@ def replay(root: Path, manifest: list[dict], task_name: str, n: int):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--task", default="task1_pick_place")
+    parser.add_argument("--dataset", default="task1_pick_place",
+                        help="first-level dataset directory under data/")
     parser.add_argument("--version", default="npz_v0")
     parser.add_argument("--replay", default="all", help="all / 0 / first N episodes")
     args = parser.parse_args()
-    dataset_root, entries = load_dataset(args.task, args.version)
+    dataset_root, entries = load_dataset(args.dataset, args.version)
     inspect_dataset(dataset_root, entries)
     count = len(entries) if args.replay == "all" else int(args.replay)
     if count:
-        replay(dataset_root, entries, args.task, count)
+        replay(dataset_root, entries, args.dataset, count)

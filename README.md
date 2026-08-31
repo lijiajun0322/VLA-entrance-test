@@ -18,22 +18,37 @@ python scripts/collect_data.py 1 --episodes 10 --version lerobot_v0
 python scripts/collect_data_npz.py 1 --episodes 10 --version npz_v0
 
 # check the dataset: stats + montages + trajectory + full-batch replay
-python scripts/check_data.py --task task1_pick_place --version lerobot_v0
+python scripts/check_data.py --dataset task1_pick_place --version lerobot_v0
 
 # interactive task viewer
 mjpython scripts/demo_tasks.py 2
 mjpython scripts/demo_tasks.py 3                 # sliding cabinet door
 
 # OpenVLA: short closed-loop smoke rollout
-python scripts/eval_openvla.py --seeds 100 --max-actions 120
+python scripts/eval_openvla.py --task 1 --seeds 100 --max-actions 120
 
 # OpenVLA: held-out evaluation with results in a named run directory
-python scripts/eval_openvla.py --seeds 0-4 --max-actions 120 \
+python scripts/eval_openvla.py --task 1 --seeds 0-4 --max-actions 120 \
   --run-name openvla_seeds_0_4
+
+# validate, then LoRA-fine-tune OpenVLA on the Task 1 LeRobot dataset
+python scripts/train_openvla_lora.py --task 1 --dry-run
+
+# Equivalent explicit dataset selection (--dataset-path overrides --version)
+python scripts/train_openvla_lora.py --task 1 \
+  --dataset-path data/task1_pick_place/lerobot_v0 --dry-run
+python scripts/train_openvla_lora.py --task 1 --epochs 5 \
+  --batch-size 1 --grad-accumulation 8 --image-aug
+
+# evaluate the merged fine-tuned checkpoint on held-out seeds
+python scripts/eval_openvla.py --task 1 --seeds 100-109 \
+  --model outputs/openvla_finetune/task1_pick_place/lora_v0 \
+  --unnorm-key g1_task1 --action-units meters \
+  --run-name task1_lora_seeds_100_109
 ```
 
 Task argument conventions: `run_expert` / `collect_data` take a numeric id
-(`1`/`2`/`3`); `check_data` reads a dataset folder — `--task` is the
+(`1`/`2`/`3`); `check_data` reads a dataset folder — `--dataset` is the
 first-level dir name under `data/` (i.e. the task's registered name,
 `task1_pick_place` / `task2_pick_by_type`), `--version` the second level:
 `data/<task>/<version>/`.
@@ -43,6 +58,7 @@ first-level dir name under `data/` (i.e. the task's registered name,
 ```bash
 python -m venv .venv && source .venv/bin/activate   # macOS
 pip install lerobot==0.4.4
+pip install peft==0.11.1                 # OpenVLA LoRA fine-tuning
 ```
 
 - Scripts without a viewer window run with plain `python`.
@@ -59,6 +75,7 @@ scripts/collect_data_npz.py / check_data_npz.py  lightweight NumPy workflow
 scripts/demo_tasks.py    interactive task viewer (mjpython)
 scripts/check_openvla.py inspect one OpenVLA prediction without executing it
 scripts/eval_openvla.py  run and score zero-shot OpenVLA rollouts
+scripts/train_openvla_lora.py  LoRA fine-tune OpenVLA from LeRobot v3 data
 ```
 
 Task difficulty increases from single-object pick-and-place (Task 1), through
@@ -129,16 +146,16 @@ per episode while preserving the exact same action and temporal semantics:
 
 ```bash
 python scripts/collect_data_npz.py 1 --episodes 10 --version npz_v0
-python scripts/check_data_npz.py --task task1_pick_place --version npz_v0
+python scripts/check_data_npz.py --dataset task1_pick_place --version npz_v0
 ```
 
 ### 3. Check the dataset
 
-`--task`/`--version` point at the dataset folder `data/<task>/<version>/`
+`--dataset`/`--version` point at the dataset folder `data/<dataset>/<version>/`
 (task name = first-level dir under `data/`).
 
 ```bash
-python scripts/check_data.py --task task1_pick_place --version lerobot_v0
+python scripts/check_data.py --dataset task1_pick_place --version lerobot_v0
 ```
 
 One command, full batch:
@@ -171,17 +188,21 @@ controller keeps the gripper orientation vertically downward.
 python scripts/check_openvla.py --seed 100
 
 # Short closed-loop safety smoke test
-python scripts/eval_openvla.py --seeds 100 --max-actions 10
+python scripts/eval_openvla.py --task 1 --seeds 100 --max-actions 10
 
 # Held-out evaluation
-python scripts/eval_openvla.py --seeds 100-119 --max-actions 120 \
+python scripts/eval_openvla.py --task 1 --seeds 100-119 --max-actions 120 \
   --run-name heldout_seeds_100_119
 ```
+
+`--task 1`, `--task 2`, and `--task 3` select pick-and-place,
+pick-by-type, and sliding-door evaluation respectively. The default is Task 1.
 
 Each invocation writes its summary, episode CSV, per-step JSON logs and videos
 under a separate `data/openvla_eval/<run_name>/` directory. If `--run-name` is
 omitted, a name such as
-`run_20260830_142155_seeds_100-119_scale_0p02` is generated from the timestamp,
+`task1_20260830_142155_seeds_100-119_scale_0p02` is generated from the task,
+timestamp,
 seeds and action scale. Existing run directories are never overwritten; choose
 a new `--run-name` when repeating an experiment.
 
@@ -196,9 +217,10 @@ data/openvla_eval/
     └── seed_101.mp4
 ```
 
-OpenVLA does not output an absolute target in meters. It outputs a normalized
-LIBERO controller command `[dx, dy, dz, droll, dpitch, dyaw, gripper]`. For the
-current top-down pick-and-place task, the adapter applies the following mapping:
+The original LIBERO checkpoint does not output an absolute target in meters. It
+outputs a normalized LIBERO controller command
+`[dx, dy, dz, droll, dpitch, dyaw, gripper]`. With the default
+`--action-units normalized`, the adapter applies:
 
 ```text
 delta_xyz_m = 0.02 * [dx, dy, dz]
@@ -212,6 +234,54 @@ ignored because the existing IK controller keeps the gripper vertically
 downward throughout this task. Finally, OpenVLA uses `gripper=1` for open and
 `gripper=0` for closed, while this environment uses `1=close`; the adapter
 therefore inverts and binarizes the gripper command.
+
+### 6. LoRA fine-tune OpenVLA on Task 1
+
+The fine-tuning loader reads the causal LeRobot transitions directly. It maps
+the stored action to `[dx_m, dy_m, dz_m, 0, 0, 0, gripper_open]`, normalizes it
+to action tokens using the dataset q01/q99 values, and writes those statistics
+into the checkpoint as `g1_task1`. Consequently `predict_action()` from the
+fine-tuned model returns translation in meters, not a LIBERO controller unit.
+
+```bash
+# Fast validation: real first video frame + instruction + action-token labels
+python scripts/train_openvla_lora.py --task 1 --dry-run
+
+# LoRA training on MPS; output is a merged, directly loadable checkpoint
+python scripts/train_openvla_lora.py --task 1 --epochs 5 \
+  --batch-size 1 --grad-accumulation 8 --image-aug
+
+# Held-out evaluation; meters is required for this fine-tuned checkpoint
+python scripts/eval_openvla.py --task 1 --seeds 100-109 \
+  --model outputs/openvla_finetune/task1_pick_place/lora_v0 \
+  --unnorm-key g1_task1 --action-units meters \
+  --run-name task1_lora_seeds_100_109
+```
+
+Training output defaults to
+`outputs/openvla_finetune/task1_pick_place/lora_v0/`. Use `--adapter-only` only
+when a small PEFT adapter is desired; the default merges LoRA into a checkpoint
+that `eval_openvla.py` can load directly.
+
+Per-optimizer-step loss, unclipped gradient norm, dynamic loss scale, and
+learning rate are written to `train_metrics.csv`. The same metrics are printed
+every five optimizer steps by default (`--log-every N` changes the interval).
+Training aborts immediately on a non-finite loss/gradient, and all trainable
+parameters are checked again before saving.
+
+`--val-ratio 0.1` (the default) holds out complete episodes rather than random
+frames; for 50 episodes this produces 45 train and 5 validation episodes.
+Validation uses no image augmentation and writes `validation_metrics.csv`.
+It runs at each epoch end by default; `--eval-every-steps N` additionally runs
+it every N optimizer steps. Use `--val-ratio 0` to train on every episode and
+disable validation.
+
+`--save-every-steps N` saves intermediate PEFT adapters under
+`<output>/checkpoints/step_XXXXXX/`; `--save-every-epoch` similarly saves
+`epoch_XXX/`. Intermediate checkpoints are adapter-only to avoid repeatedly
+writing a full 15 GB model (a rank-32 adapter is still roughly 670 MB). The
+final output keeps the normal behavior: merged model by default, adapter-only
+with `--adapter-only`.
 
 ## Current dataset versions
 
