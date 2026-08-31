@@ -11,6 +11,7 @@ import numpy as np
 
 import mujoco
 
+from .actions import DeltaEEAction
 from .ik import solve_ik, IK_JOINTS, HOME_POSE
 from .servo import CartesianServo
 from mujoco_datasets.spec import ACTION_SPEC
@@ -31,12 +32,30 @@ class OnlineActionExecutor:
             for j in IK_JOINTS])
         self.n_steps = 0
         self.ik_failures = 0
+        self._last_q_target = self.data.qpos[self.qadr].copy()
 
     def reset(self):
         self.n_steps = 0
         self.ik_failures = 0
+        self._last_q_target = self.data.qpos[self.qadr].copy()
 
-    def step(self, action4: np.ndarray) -> bool:
+    def step_delta(self, action: DeltaEEAction,
+                   xyz_low=(0.24, -0.28, 0.755),
+                   xyz_high=(0.37, -0.02, 0.98),
+                   on_substep=None) -> bool:
+        """执行一个 20Hz 世界系 delta action；底层仍跟踪 absolute EE target。"""
+        current = self.env.ee_xpos()
+        target = np.clip(
+            current + action.delta_xyz_m,
+            np.asarray(xyz_low, dtype=float),
+            np.asarray(xyz_high, dtype=float),
+        )
+        self.last_absolute_target = np.concatenate(
+            [target, [action.gripper_close]]
+        ).astype(np.float32)
+        return self.step(self.last_absolute_target, on_substep=on_substep)
+
+    def step(self, action4: np.ndarray, on_substep=None) -> bool:
         """执行一个 20Hz action frame；返回本帧 IK 是否收敛。"""
         action4 = np.asarray(action4, dtype=float)
         if action4.shape != (4,) or not np.isfinite(action4).all():
@@ -44,8 +63,11 @@ class OnlineActionExecutor:
         target = action4[:3]
         q_meas = self.data.qpos[self.qadr].copy()
         q_star, converged = solve_ik(
-            self.model, target, seeds=[q_meas, HOME_POSE], n_random=5, iters=800
+            self.model, target,
+            seeds=[self._last_q_target, q_meas, HOME_POSE],
+            n_random=5, iters=800,
         )
+        self._last_q_target = q_star.copy()
         if not converged:
             self.ik_failures += 1
 
@@ -58,6 +80,9 @@ class OnlineActionExecutor:
                 self.env.set_arm8(self.servo.step(target))
             self.env.set_gripper(float(np.clip(action4[3], 0.0, 1.0)))
             self.env.step()
+            # 500Hz physics 中约每 8 步回调一次，供 viewer 以约 60Hz 刷新。
+            if on_substep is not None and ((k + 1) % 8 == 0 or k + 1 == every):
+                on_substep(k + 1, every)
         self.n_steps += 1
         return converged
 

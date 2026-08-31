@@ -108,6 +108,7 @@ def add_object(spec: "mujoco.MjSpec", name: str, shape: str,
     kw = dict(rgba=list(rgba), friction=[1.0, 0.005, 0.0001],
               solref=[0.004, 1.0])   # 硬接触：避免夹爪闭合时的接触柔顺抖动
     if shape == "t":
+        scale = size / 0.022
         # T 字积木（平躺放置，初始位姿即稳定位姿）：
         # 横梁 4.6×2.4×4.4cm + 竖梁 2.4×3.4×4.4cm（重叠 0.8cm），体积 76cm³
         # （介于圆柱 67 与方块 85 之间）。厚度 4.4cm 与方块同高——抓取目标
@@ -115,10 +116,12 @@ def add_object(spec: "mujoco.MjSpec", name: str, shape: str,
         # 奇异带（最小奇异值 ~0.02，descend 残差卡 1cm 磨到超时）。
         # 两块板相对 body 原点对称摆放，原点 = T 几何中心，落在竖梁上
         body.add_geom(name=f"{name}_geom", type=mujoco.mjtGeom.mjGEOM_BOX,
-                      size=[0.023, 0.012, 0.022], pos=[0, -0.014, 0],
+                      size=[0.023 * scale, 0.012 * scale, 0.022],
+                      pos=[0, -0.014 * scale, 0],
                       mass=0.06, **kw)
         body.add_geom(name=f"{name}_geom_stem", type=mujoco.mjtGeom.mjGEOM_BOX,
-                      size=[0.012, 0.017, 0.022], pos=[0, 0.011, 0],
+                      size=[0.012 * scale, 0.017 * scale, 0.022],
+                      pos=[0, 0.011 * scale, 0],
                       mass=0.04, **kw)
         return body
     gtype = {"cube": mujoco.mjtGeom.mjGEOM_BOX,

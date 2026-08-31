@@ -34,6 +34,13 @@ OBS_SPEC = ObsSpec(
     proprio_dim=10,
 )
 
+PROPRIO_NAMES = (
+    "waist_yaw",
+    "right_shoulder_pitch", "right_shoulder_roll", "right_shoulder_yaw",
+    "right_elbow", "right_wrist_roll", "right_wrist_pitch", "right_wrist_yaw",
+    "finger_left", "finger_right",
+)
+
 DEFAULT_CAMERA_MAP = {
     "overhead_rgb": "overhead_cam",
     "wrist_rgb": "wrist_cam",
@@ -47,10 +54,10 @@ TASK_CAMERA_MAPS = {
 def camera_map_for_task(task_name: str) -> dict:
     return dict(TASK_CAMERA_MAPS.get(task_name, DEFAULT_CAMERA_MAP))
 
-# 动作标签 = ee_site 世界坐标(3) + 夹爪开度(1)。
-# 夹爪全程竖直朝下（姿态恒定），故 4 维即完整动作；推理时用
-# control.CartesianServo 跟踪 ee 目标即可驱动仿真（无需完整 IK）。
+# 动作标签 = 世界坐标系 EE translation delta (m) + 夹爪闭合指令。
+# observation_t 与 action_t 在执行前配对；executor 再将 delta 积分成 absolute
+# EE target。夹爪全程保持固定向下姿态，因此 action 不包含 orientation。
 ACTION_SPEC = ActionSpec(
-    names=("ee_x", "ee_y", "ee_z", "gripper"),
+    names=("delta_x_m", "delta_y_m", "delta_z_m", "gripper_close"),
     control_hz=20,
 )

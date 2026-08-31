@@ -1,14 +1,11 @@
-"""数据采集：脚本专家跑回合，逐帧录制 (观测, 指令, 动作) 数据集。
+"""数据采集：脚本专家直接写 LeRobot v3 数据集。
 
     python scripts/collect_data.py 1 --episodes 5              # 采 5 个成功回合
     python scripts/collect_data.py 2 --seeds 12,18,21          # 显式指定 seed
 
-存储到 data/<task_name>/<version>/（--version 可改，默认 v0；目录已存在则
-接续编号追加，不覆盖）：
-  episodes/ 每回合一个 npz、videos/ 同名 mp4、manifest.jsonl 索引、
-  norm_stats.json 归一化统计；失败回合 npz+视频成对归档到 failures/
-  （无失败不建该目录）。
-采样规格见 mujoco_datasets/spec.py：20Hz，动作 = ee_xyz + 夹爪开度（4 维）。
+存储到 data/<task_name>/<version>/：官方 LeRobot v3 Parquet + MP4 + metadata。
+目录必须为空；追加采集请使用新的 --version。失败回合不会写入数据集。
+采样规格：20Hz，action = world-frame delta xyz (m) + gripper_close。
 """
 
 import argparse
@@ -22,16 +19,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from envs import ALL_TASKS, G1TaskEnv
 from control.expert import make_expert
 from mujoco_datasets.recorder import EpisodeRecorder
-from mujoco_datasets.spec import ACTION_SPEC
 
 
-def collect(task_id: int, episodes: int, version: str, seed0: int, seeds=None):
+def collect(task_id: int, episodes: int, version: str, seed0: int, seeds=None,
+            repo_id: str | None = None):
     task = ALL_TASKS[task_id - 1]
     env = G1TaskEnv(task)
     out_dir = Path(__file__).resolve().parent.parent / "data" / task.name / version
-    rec = EpisodeRecorder(out_dir, task.name)
-    every = ACTION_SPEC.sample_every          # 每 25 步采一帧 (20Hz)
-
+    rec = EpisodeRecorder(out_dir, task.name, repo_id=repo_id)
     # 显式 seed 列表优先（可手工挑回合构成，如垫子距离分层）；否则从 seed0 顺延
     pending = list(seeds) if seeds else itertools.count(seed0)
 
@@ -42,21 +37,21 @@ def collect(task_id: int, episodes: int, version: str, seed0: int, seeds=None):
         env.reset(seed)
         rec.start(env, seed=seed)
         expert = make_expert(env, task)
-        i = 0
         while not expert.done:
-            expert.step()
-            if i % every == 0:
-                rec.sample(env, phase=expert._phase())
-            i += 1
-        rec.sample(env, phase="done")         # 末帧（成功判定的静止状态）
+            # Causal alignment: store (observation_t, action_t), then execute.
+            phase = expert._phase()
+            action = expert.act()
+            rec.add_frame(env, action.as_array(), phase=phase)
+            expert.executor.step_delta(action)
+            expert.update()
         ok = env.is_success()
-        path = rec.end(ok)
+        n_frames = rec.end(ok)
         wins += ok
         tries += 1
         print(f"[{tries:3d}] seed={seed} {'success' if ok else 'FAIL'} "
-              f"frames={rec._manifest[-1]['n_frames']:3d} "
+              f"frames={n_frames:3d} "
               f"done {wins}/{episodes}  {env.instruction}")
-    rec.write_stats()
+    rec.finalize()
 
     dt = time.time() - t0
     print(f"\ndataset: {out_dir}")
@@ -72,6 +67,8 @@ if __name__ == "__main__":
     ap.add_argument("--seed0", type=int, default=0)
     ap.add_argument("--seeds", default=None,
                     help="逗号分隔的显式 seed 列表（优先于 --seed0 顺延）")
+    ap.add_argument("--repo-id", default=None,
+                    help="LeRobot repo id metadata（默认 local/<task_name>）")
     args = ap.parse_args()
     seeds = [int(s) for s in args.seeds.split(",")] if args.seeds else None
-    collect(args.task, args.episodes, args.version, args.seed0, seeds)
+    collect(args.task, args.episodes, args.version, args.seed0, seeds, args.repo_id)

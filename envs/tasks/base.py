@@ -31,7 +31,7 @@ class Task:
         return False
 
     def expert_spec(self) -> dict:
-        """脚本专家（control.PickPlaceExpert）的构造参数。
+        """统一脚本专家工厂（control.make_expert）的构造参数。
         默认抓 cube 放 target_pad；子类按需覆盖。"""
         return {"obj_name": "cube", "pad_name": "target_pad", "place_h": 0.045}
 

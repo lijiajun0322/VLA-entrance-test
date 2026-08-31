@@ -53,10 +53,8 @@ mjpython scripts/demo_tasks.py 1
     夹爪竖直朝下）；`HOME_POSE` 初始姿态
   - `servo.py` — `CartesianServo`：笛卡尔闭环伺服（专家收尾修正 / 数据回放检查 /
     任务4策略推理三处复用）
-  - `expert.py` — `PickPlaceExpert` 脚本专家：路点 IK + 关节插值 + 伺服修正；
-    task1 成功率 30/30；构造参数来自 `Task.expert_spec()`
-  - `door_expert.py` — `OpenSlidingDoorExpert`：从上方夹住竖直把手，沿 slide
-    joint 分阶段横拉；task3 基线成功率 10/10
+  - `expert.py` — 统一的 20Hz delta-EE scripted experts；按
+    `Task.expert_spec().kind` 选择抓放或横拉门状态机
   - `openvla_action_adapter.py` — OpenVLA LIBERO 7D delta action 到安全 4D
     absolute ee_xyz + gripper action 的映射；模型旋转输出不用于当前竖直顶抓任务
 - `policies/` — 任务四学习策略接入
@@ -65,9 +63,11 @@ mjpython scripts/demo_tasks.py 1
   `datasets` 包同名）
   - `spec.py` — `OBS_SPEC`/`ACTION_SPEC`：观测（task1/2 双相机、task3 单相机，
     224 RGB + 10 维 proprio：腰yaw+右臂7+双指2）、
-    动作标签（ee_xyz + gripper, 4 维 @20Hz）的唯一契约
-  - `recorder.py` — `EpisodeRecorder`：逐帧录 obs/action/ctrl/元数据，npz + manifest
-    + 归一化统计；失败回合归档到 failures/
+    动作标签（world-frame delta xyz + gripper_close, 4 维 @20Hz）的唯一契约
+  - `recorder.py` — 官方 `LeRobotDataset` v3 writer；采集时直接写 Parquet +
+    camera MP4 + metadata，严格记录 observation_t/action_t；失败回合丢弃
+  - `npz_recorder.py` — 可选轻量后端；逐回合 NPZ+MP4，可追加，动作和时序契约
+    与 LeRobot 后端完全相同
 - `data/` — 录制数据与预览图的存放处（gitignore，不入库）：
   `data/<task_name>/v0/` 为数据集，`data/preview/` 为预览图，
   `data/<task_name>_videos/` 为各任务演示视频
@@ -76,10 +76,9 @@ mjpython scripts/demo_tasks.py 1
   `mjpython scripts/run_expert.py 1 --visual` 可视化演示专家执行
 - `scripts/collect_data.py` — `python scripts/collect_data.py 1 --episodes 50` 采集数据集
   （`--seeds` 可显式指定 seed 列表控制回合构成）
-- `scripts/check_data.py` — 数据集检查 + 回放验证（原 inspect_data/record_video
-  合并）：统计/关键帧拼图/ee轨迹图，`--replay N` 用 control/executor 跟随动作
-  标签重跑验证可执行性（任务 4 部署链路预演），`--video` 同步录回放 MP4 到
-  `inspect/`，与 `videos/` 的专家执行对照
+- `scripts/collect_data_npz.py` / `check_data_npz.py` — 轻量 NPZ 采集与检查
+- `scripts/check_data.py` — 加载 LeRobot v3，检查 schema/timestamp/delta 限幅，
+  生成关键帧与累计轨迹，并用 delta executor 回放验证
 - `scripts/demo_tasks.py` — `mjpython scripts/demo_tasks.py [任务号]` 可视化看任务和随机化
 - `data/preview/` — 各任务相机预览图
 - `unitree_mujoco/` — 宇树官方 MuJoCo repo（clone 而来）；G1 模型在

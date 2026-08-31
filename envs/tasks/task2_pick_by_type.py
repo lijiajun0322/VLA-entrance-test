@@ -20,19 +20,19 @@ class Task2PickByType(Task):
 
     # 布局间距：AABB（切比雪夫距离）判定 + 分类额外间距（CLEAR_*）。
     # 夹爪全开跨距 8.4cm、指板外沿 ±4.8cm：物-物净距不足时夹爪会被邻物挡住
-    # 或一把夹起两个，故物-物中心距须 ≥8cm（CLEAR_OBJ 最大）
+    # 或一把夹起两个。额外保留 4cm AABB 净距，让手指和腕部下降时也有余量。
     PAD_HALF = 0.03
     MARGIN = 0.005             # 补落稳的毫米级漂移
     CLEAR_PAD_PAD = 0.010      # 垫-垫：防放置歧义
-    CLEAR_PAD_OBJ = 0.010
-    CLEAR_OBJ_OBJ = 0.025      # 窄条工作区装不下 6 个 8cm 间距的点，收 1cm
+    CLEAR_PAD_OBJ = 0.005      # pad 无碰撞；保留视觉净空即可
+    CLEAR_OBJ_OBJ = 0.040
     # 各物体的平面半包围（cube/T 轴对齐平躺、圆柱竖立）
-    OBJ_HALF = {"cube": (0.022, 0.022), "cylinder": (0.022, 0.022),
+    OBJ_HALF = {"cube": (0.021, 0.021), "cylinder": (0.022, 0.022),
                 "t": (0.023, 0.026)}
     # 生成位姿（quat, 半高）：直接以落稳定姿态贴桌面生成（+2mm 间隙），
     # 物体不再下坠弹跳滚移，落稳位置即采样位置。
     # 圆柱竖立（r=h/2 矮胖不会倒）：手指沿 y 横跨直径夹持，稳定不滑
-    SPAWN = {"cube": ((1, 0, 0, 0), 0.022),
+    SPAWN = {"cube": ((1, 0, 0, 0), 0.021),
              "cylinder": ((1, 0, 0, 0), 0.022),
              "t": ((1, 0, 0, 0), 0.022)}
     # 抓取时 ee 相对物体中心的 z 补偿（按物体半高定，让指板咬在物体中部）。
@@ -43,7 +43,8 @@ class Task2PickByType(Task):
 
     def setup(self, spec):
         for name, shape in self.OBJECTS:
-            sb.add_object(spec, name, shape, size=0.022)
+            size = 0.021 if shape == "cube" else 0.022
+            sb.add_object(spec, name, shape, size=size)
         for i in range(3):
             sb.add_pad(spec, f"pad{i}", rgba=[0, 0, 0, 1], half=self.PAD_HALF)
         self.obj_colors = {}
@@ -94,8 +95,7 @@ class Task2PickByType(Task):
         raise RuntimeError("task2 布局采样不收敛")
 
     def randomize(self, env, rng):
-        # 先抽目标与颜色、再摆场景（语义不变：全部均匀随机；顺序只影响
-        # 随机流相位，让默认 seed 序列覆盖到不同的构型组合）
+        self.instruction_variant = int(rng.random() >= 0.5)
         self.target_obj = self.OBJECTS[rng.integers(3)][0]
         self.target_pad = f"pad{rng.integers(3)}"
         colors = list(sb.COLORS)
@@ -120,8 +120,10 @@ class Task2PickByType(Task):
         # 颜色保留。物体颜色仅作视觉随机化
         shape = dict((n, s) for n, s in self.OBJECTS)[self.target_obj]
         word = self.SHAPE_WORDS[shape]
-        return (f"pick up the {word} "
-                f"and place it on the {self.pad_colors[self.target_pad]} pad")
+        pad = self.pad_colors[self.target_pad]
+        if self.instruction_variant == 0:
+            return f"pick up the {word} and place it on the {pad} pad"
+        return f"move the {word} onto the {pad} pad"
 
     def is_success(self, env) -> bool:
         obj, pad = env.obj_xpos(self.target_obj), env.obj_xpos(self.target_pad)

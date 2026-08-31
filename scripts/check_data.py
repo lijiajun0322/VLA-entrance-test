@@ -1,174 +1,170 @@
-"""数据集检查 + 回放验证（原 inspect_data / record_video 合并）。
+"""Inspect and replay-check a directly recorded LeRobot v3 dataset.
 
-    python scripts/check_data.py --task task1_pick_place --version v1   # 全套检查+全量回放+回放视频
-    python scripts/check_data.py --task task1_pick_place --replay 5     # 只回放前 5 个
-    python scripts/check_data.py --task task1_pick_place --replay 0 --no-video  # 只看统计/图
+    python scripts/check_data.py --task task1_pick_place --version lerobot_v0
+    python scripts/check_data.py --task task1_pick_place --version lerobot_v0 --replay 1
 
-检查内容：
-  summary        终端打印统计（回合/帧数/指令/action 分布）
-  montage.png    随机回合的关键帧拼图（肉眼检查图像-动作对齐）
-  trajectory.png ee 轨迹 3D 图（检查路径合理、无跳变）
-  replay         用 control/executor 跟随录下的动作序列重跑（任务 4 部署
-                 链路的预演：动作 -> IK -> 伺服 -> 仿真），验证标签可执行；
-                 --video 同时把回放过程录成 MP4，与 videos/ 里的专家执行
-                 视频对照，两者差异 = 开环跟随误差的可视化
-
-输出存到 data/<task>/<version>/inspect/。
+Outputs montages, delta/cumulative trajectories, and optional replay videos to
+``data/<task>/<version>/inspect``.
 """
 
-import argparse
-import io
-import json
-import sys
-from pathlib import Path
+from __future__ import annotations
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import argparse
+import sys
+import warnings
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 ROOT = Path(__file__).resolve().parent.parent
 
-
-def load_episode(path: Path) -> dict:
-    d = np.load(path, allow_pickle=True)
-    out = {k: d[k] for k in d.files}
-    for key in (k for k in d.files if k.endswith("_rgb")):
-        out[key] = [np.array(Image.open(io.BytesIO(bytes(b)))) for b in d[key]]
-    return out
+warnings.filterwarnings(
+    "ignore",
+    message="The video decoding and encoding capabilities of torchvision are deprecated.*",
+)
 
 
 def load_dataset(task: str, version: str):
-    out_dir = ROOT / "data" / task / version
-    manifest = [json.loads(line) for line in
-                (out_dir / "manifest.jsonl").read_text().splitlines() if line.strip()]
-    manifest = [e for e in manifest if e["success"]]
-    stats = json.loads((out_dir / "norm_stats.json").read_text())
-    return out_dir, manifest, stats
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    root = ROOT / "data" / task / version
+    if not (root / "meta" / "info.json").exists():
+        raise FileNotFoundError(f"not a LeRobot v3 dataset: {root}")
+    repo_id = f"local/{task}"
+    # torchcodec is installed as a LeRobot dependency but may not find shared
+    # Homebrew FFmpeg dylibs on macOS; PyAV is already available and reliable.
+    return root, LeRobotDataset(repo_id, root=root, video_backend="pyav")
 
 
-def show_summary(manifest, stats):
-    frames = sum(e["n_frames"] for e in manifest)
-    print(f"episodes: {len(manifest)}, frames: {frames}")
-    print(f"action mean: {[round(v, 3) for v in stats['action_mean']]}")
-    print(f"action std:  {[round(v, 3) for v in stats['action_std']]}")
+def episode_indices(ds) -> list[np.ndarray]:
+    ep = np.asarray(ds.hf_dataset["episode_index"], dtype=int)
+    return [np.flatnonzero(ep == i) for i in range(ds.meta.total_episodes)]
 
 
-def make_montages(out_dir, manifest, n_frames=8):
-    """每个 episode 一张关键帧拼图：inspect/montage_episode_XXXX.png"""
-    (out_dir / "inspect").mkdir(exist_ok=True)
-    for e in manifest:
-        ep = load_episode(out_dir / e["episode"])
-        idx = np.linspace(0, len(ep["action"]) - 1, n_frames).astype(int)
-        image_keys = [k for k in ep if k.endswith("_rgb")]
-        rows = [np.concatenate([ep[key][i] for i in idx], axis=1)
-                for key in image_keys]
-        img = np.concatenate(rows, axis=0)
-        stem = Path(e["episode"]).stem
-        Image.fromarray(img).save(out_dir / "inspect" / f"montage_{stem}.png")
-    print(f"montage: inspect/montage_episode_*.png x{len(manifest)} "
-          f"(one row per camera, time left to right)")
+def _numpy_image(value) -> np.ndarray:
+    if hasattr(value, "detach"):
+        value = value.detach().cpu().numpy()
+    value = np.asarray(value)
+    if value.shape[0] in (1, 3, 4):
+        value = np.moveaxis(value, 0, -1)
+    if np.issubdtype(value.dtype, np.floating):
+        value = np.clip(value * 255.0, 0, 255).astype(np.uint8)
+    return value[..., :3]
 
 
-def plot_trajectory(out_dir, manifest):
+def show_summary(ds, groups):
+    actions = np.asarray(ds.hf_dataset["action"], dtype=np.float32)
+    timestamps = np.asarray(ds.hf_dataset["timestamp"], dtype=np.float32)
+    delta_norm = np.linalg.norm(actions[:, :3], axis=1)
+    bad_dt = sum(
+        np.count_nonzero(np.abs(np.diff(timestamps[idx]) - 1 / ds.fps) > 1e-4)
+        for idx in groups
+    )
+    print(f"format: LeRobot {ds.meta.info['codebase_version']}")
+    print(f"episodes: {ds.meta.total_episodes}, frames: {ds.meta.total_frames}, fps: {ds.fps}")
+    print(f"robot: {ds.meta.robot_type}, cameras: {ds.meta.camera_keys}")
+    print(f"tasks: {list(ds.meta.tasks.index)}")
+    print(f"action mean: {np.round(actions.mean(0), 4).tolist()}")
+    print(f"action std:  {np.round(actions.std(0), 4).tolist()}")
+    print(f"delta norm max: {delta_norm.max():.4f} m, timestamp errors: {bad_dt}")
+    if delta_norm.max() > 0.0151:
+        raise AssertionError("translation command exceeds 1.5 cm action limit")
+    if bad_dt:
+        raise AssertionError("timestamps are not uniformly aligned at dataset fps")
+
+
+def make_montages(root: Path, ds, groups, n_frames=8):
+    inspect_dir = root / "inspect"
+    inspect_dir.mkdir(exist_ok=True)
+    for ep_i, idx in enumerate(groups):
+        selected = idx[np.linspace(0, len(idx) - 1, n_frames).astype(int)]
+        rows = []
+        for key in ds.meta.camera_keys:
+            rows.append(np.concatenate([_numpy_image(ds[int(i)][key]) for i in selected], axis=1))
+        Image.fromarray(np.concatenate(rows, axis=0)).save(
+            inspect_dir / f"montage_episode_{ep_i:06d}.png"
+        )
+    print(f"montages: inspect/montage_episode_*.png x{len(groups)}")
+
+
+def plot_trajectory(root: Path, ds, groups):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig = plt.figure(figsize=(10, 4))
+    fig = plt.figure(figsize=(11, 4))
     ax1 = fig.add_subplot(121, projection="3d")
     ax2 = fig.add_subplot(122)
-    for e in manifest[:10]:
-        ep = load_episode(out_dir / e["episode"])
-        a = ep["action"]
-        ax1.plot(a[:, 0], a[:, 1], a[:, 2], alpha=0.5)
-        ax2.plot(a[:, 3], alpha=0.5)
-    ax1.set_title("ee trajectory (10 episodes)")
-    ax1.set_xlabel("x"); ax1.set_ylabel("y"); ax1.set_zlabel("z")
-    ax2.set_title("gripper opening")
-    ax2.set_xlabel("frame @20Hz"); ax2.set_ylabel("close 0~1")
-    path = out_dir / "inspect" / "trajectory.png"
-    path.parent.mkdir(exist_ok=True)
+    actions = np.asarray(ds.hf_dataset["action"], dtype=np.float32)
+    for idx in groups[:10]:
+        a = actions[idx]
+        xyz = np.cumsum(a[:, :3], axis=0)
+        ax1.plot(xyz[:, 0], xyz[:, 1], xyz[:, 2], alpha=0.6)
+        ax2.plot(a[:, 3], alpha=0.6)
+    ax1.set_title("cumulative commanded EE displacement")
+    ax1.set_xlabel("Δx sum (m)"); ax1.set_ylabel("Δy sum (m)"); ax1.set_zlabel("Δz sum (m)")
+    ax2.set_title("gripper command")
+    ax2.set_xlabel("frame @20Hz"); ax2.set_ylabel("close 0..1")
+    path = root / "inspect" / "trajectory.png"
     fig.savefig(path, dpi=120, bbox_inches="tight")
     print(f"trajectory: {path}")
 
 
-def replay_check(out_dir, manifest, task_name: str, n: int, video: bool):
-    """回放验证：跟随录下的动作标签重跑回合，检验标签可执行。
-
-    执行链路 = 任务 4 策略推理的预演（动作序列 -> 控制 -> 仿真），
-    只是动作来源从"录制的标签"换成"策略输出"。引擎在 control/executor.py。
-    """
-    import mujoco
+def replay_check(root: Path, ds, groups, task_name: str, n: int, video: bool):
     import imageio.v2 as imageio
-    from envs.tasks import TASKS
+    import mujoco
+    from control.actions import DeltaEEAction
+    from control.executor import OnlineActionExecutor
     from envs.g1_env import G1TaskEnv
-    from control.executor import execute_actions
-    from mujoco_datasets.spec import ACTION_SPEC
+    from envs.tasks import TASKS
 
     env = G1TaskEnv(TASKS[task_name]())
-    renderer = None
-    cam_ids = {name: mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_CAMERA, name)
-               for name in env.obs_camera_map.values()} if video else None
-    if video:
-        renderer = mujoco.Renderer(env.model, 224, 224)
-        (out_dir / "inspect").mkdir(exist_ok=True)
-
-    def compose(instruction, t) -> np.ndarray:
-        from PIL import ImageDraw
-        frames = []
-        for cam in env.obs_camera_map.values():
-            renderer.update_scene(env.data, camera=cam_ids[cam])
-            frames.append(renderer.render())
-        img = Image.fromarray(frames[0])
-        strip = Image.new("RGB", (img.width, 22), (0, 0, 0))
-        ImageDraw.Draw(strip).text((6, 5), f"[replay] {instruction[:60]} | {t}",
-                                   fill=(255, 255, 255))
-        img.paste(strip, (0, 0))
-        frames[0] = np.array(img)
-        return np.concatenate(frames, axis=1)
-
+    renderer = mujoco.Renderer(env.model, 224, 224) if video else None
+    actions = np.asarray(ds.hf_dataset["action"], dtype=np.float32)
+    seeds = np.asarray(ds.hf_dataset["seed"], dtype=np.int64).reshape(-1)
+    inspect_dir = root / "inspect"
+    inspect_dir.mkdir(exist_ok=True)
     wins = 0
-    for e in manifest[:n]:
-        ep = load_episode(out_dir / e["episode"])
-        env.reset(int(ep["seed"]))
+    for ep_i, idx in enumerate(groups[:n]):
+        env.reset(int(seeds[idx[0]]))
+        executor = OnlineActionExecutor(env)
         writer = None
         if video:
-            stem = Path(e["episode"]).stem
-            writer = imageio.get_writer(out_dir / "inspect" / f"replay_{stem}.mp4",
-                                        fps=ACTION_SPEC.control_hz,
-                                        macro_block_size=1)
-
-        def on_frame(t, writer=writer, e=e):
+            writer = imageio.get_writer(inspect_dir / f"replay_episode_{ep_i:06d}.mp4",
+                                         fps=ds.fps, macro_block_size=1)
+        for a in actions[idx]:
+            executor.step_delta(DeltaEEAction(a[:3], float(a[3])))
             if writer is not None:
-                writer.append_data(compose(e["instruction"], t))
-
-        ok = execute_actions(env, ep["action"],
-                             on_frame=on_frame if video else None)
+                frames = []
+                for cam in env.obs_camera_map.values():
+                    renderer.update_scene(env.data, camera=cam)
+                    frames.append(renderer.render().copy())
+                writer.append_data(np.concatenate(frames, axis=1))
         if writer is not None:
             writer.close()
+        ok = bool(env.is_success())
         wins += ok
-        stem = Path(e["episode"]).stem
-        video_rel = f"inspect/replay_{stem}.mp4" if video else "-"
-        print(f'  "{e["instruction"]}" | {stem} | '
-              f'{"success" if ok else "FAIL"} | {video_rel}')
-    print(f"replay verification: {wins}/{n} passed")
+        print(f"  episode {ep_i:06d}, seed={seeds[idx[0]]}: {'success' if ok else 'FAIL'}")
+    print(f"delta-action replay: {wins}/{min(n, len(groups))} passed")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", default="task1_pick_place")
-    ap.add_argument("--version", default="v1")
+    ap.add_argument("--version", default="lerobot_v0")
     ap.add_argument("--replay", default="all",
-                    help="回放验证范围：默认整批全部回放，0 跳过，数字回放前 N 个")
-    ap.add_argument("--no-video", dest="video", action="store_false",
-                    help="不录回放视频（默认录，存 inspect/replay_*.mp4）")
+                    help="all / 0 / first N episodes")
+    ap.add_argument("--no-video", dest="video", action="store_false")
     args = ap.parse_args()
 
-    out_dir, manifest, stats = load_dataset(args.task, args.version)
-    show_summary(manifest, stats)
-    make_montages(out_dir, manifest)
-    plot_trajectory(out_dir, manifest)
-    if args.replay:
-        n = len(manifest) if args.replay == "all" else int(args.replay)
-        replay_check(out_dir, manifest, args.task, n, args.video)
+    root, dataset = load_dataset(args.task, args.version)
+    groups = episode_indices(dataset)
+    show_summary(dataset, groups)
+    make_montages(root, dataset, groups)
+    plot_trajectory(root, dataset, groups)
+    n = len(groups) if args.replay == "all" else int(args.replay)
+    if n:
+        replay_check(root, dataset, groups, args.task, n, args.video)

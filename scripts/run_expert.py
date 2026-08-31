@@ -1,7 +1,7 @@
 """脚本专家运行器：headless 评测成功率 / 可视化单次演示。
 
     python scripts/run_expert.py 1 --seeds 20          # 任务1跑20个种子出成功率
-    mjpython scripts/run_expert.py 1 --visual          # 可视化看一次
+    mjpython scripts/run_expert.py 1 --visual --seed 5 # 可视化指定 seed
 """
 
 import argparse
@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from envs import ALL_TASKS, G1TaskEnv
 from envs.scene import configure_viewer_camera
 from control.expert import make_expert
+from mujoco_datasets.spec import ACTION_SPEC
 
 
 def run_headless(task_id: int, seeds: int):
@@ -43,9 +44,15 @@ def run_visual(task_id: int, seed: int = 0):
     with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
         configure_viewer_camera(viewer, env.model, task.name)
         while viewer.is_running() and not expert.done:
-            expert.step()
-            viewer.sync()
-            time.sleep(env.model.opt.timestep)
+            tick_start = time.perf_counter()
+
+            def sync_substep(step_i, n_steps):
+                # 将 action 内的三次刷新均匀铺在 50ms 周期中，而不是连续突发。
+                deadline = tick_start + step_i / n_steps / ACTION_SPEC.control_hz
+                time.sleep(max(0.0, deadline - time.perf_counter()))
+                viewer.sync()
+
+            expert.step(on_substep=sync_substep)
         # 多转 1 秒确认物体静止
         t0 = time.time()
         while viewer.is_running() and time.time() - t0 < 1.0:
@@ -60,8 +67,10 @@ if __name__ == "__main__":
     ap.add_argument("task", type=int, choices=(1, 2, 3))
     ap.add_argument("--seeds", type=int, default=20)
     ap.add_argument("--visual", action="store_true")
+    ap.add_argument("--seed", type=int, default=0,
+                    help="可视化模式使用的单个随机 seed（默认 0）")
     args = ap.parse_args()
     if args.visual:
-        run_visual(args.task)
+        run_visual(args.task, args.seed)
     else:
         run_headless(args.task, args.seeds)

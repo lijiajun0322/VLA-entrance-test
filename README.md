@@ -7,15 +7,18 @@ pipeline, and zero-shot OpenVLA policy inference.
 ## Quick reference
 
 ```bash
-# evaluate the scripted expert (task id: 1 = pick&place, 2 = pick by type)
+# evaluate the scripted expert (1 = pick&place, 2 = pick by type, 3 = sliding door)
 python scripts/run_expert.py 1 --seeds 30            # headless success rate
-mjpython scripts/run_expert.py 1 --visual            # watch it execute
+mjpython scripts/run_expert.py 1 --visual --seed 0   # watch one selected seed
 
 # collect demonstration episodes
-python scripts/collect_data.py 1 --episodes 10 --version v1
+python scripts/collect_data.py 1 --episodes 10 --version lerobot_v0
+
+# optional lightweight NPZ backend (same causal delta actions)
+python scripts/collect_data_npz.py 1 --episodes 10 --version npz_v0
 
 # check the dataset: stats + montages + trajectory + full-batch replay
-python scripts/check_data.py --task task1_pick_place --version v1
+python scripts/check_data.py --task task1_pick_place --version lerobot_v0
 
 # interactive task viewer
 mjpython scripts/demo_tasks.py 2
@@ -39,6 +42,7 @@ first-level dir name under `data/` (i.e. the task's registered name,
 
 ```bash
 python -m venv .venv && source .venv/bin/activate   # macOS
+pip install lerobot==0.4.4
 ```
 
 - Scripts without a viewer window run with plain `python`.
@@ -51,6 +55,7 @@ python -m venv .venv && source .venv/bin/activate   # macOS
 scripts/run_expert.py    evaluate the scripted expert (control quality)
 scripts/collect_data.py  collect demonstration episodes (task 3)
 scripts/check_data.py    inspect + replay-verify the dataset
+scripts/collect_data_npz.py / check_data_npz.py  lightweight NumPy workflow
 scripts/demo_tasks.py    interactive task viewer (mjpython)
 scripts/check_openvla.py inspect one OpenVLA prediction without executing it
 scripts/eval_openvla.py  run and score zero-shot OpenVLA rollouts
@@ -66,15 +71,22 @@ Task 3 randomizes the complete window/frame assembly by up to 2.5 cm in x and
 
 ```bash
 python scripts/run_expert.py 1 --seeds 30            # headless, success rate
-mjpython scripts/run_expert.py 1 --visual            # watch it execute
+mjpython scripts/run_expert.py 1 --visual --seed 0   # watch one selected seed
 ```
+
+All three tasks are selected through `make_expert(env, task)` in
+`control/expert.py`. The pick/place and sliding-door state machines emit a
+common 20 Hz action, `[delta_x, delta_y, delta_z, gripper_close]`, in world-frame
+meters; `OnlineActionExecutor` integrates the translation command and tracks the
+resulting absolute target with the existing IK/Cartesian servo. End-effector
+orientation remains the fixed downward grasp orientation at this stage.
 
 ### 2. Collect demonstration data
 
 ```bash
-python scripts/collect_data.py 1 --episodes 10 --version v1
-python scripts/collect_data.py 2 --episodes 50 --version v0
-python scripts/collect_data.py 2 --seeds 12,18,21 --version v0   # explicit seeds
+python scripts/collect_data.py 1 --episodes 10 --version lerobot_v0
+python scripts/collect_data.py 2 --episodes 10 --version lerobot_v0
+python scripts/collect_data.py 2 --seeds 12,18,21 --version lerobot_seeded
 ```
 
 Flags:
@@ -82,29 +94,43 @@ Flags:
 | flag | default | meaning |
 |---|---|---|
 | `--episodes N` | 50 | collect until N **successful** episodes (failures retry with new seeds) |
-| `--version V` | v0 | dataset dir `data/<task>/V/`; if it exists, **appends** with continued episode ids (never overwrites) |
+| `--version V` | v0 | dataset dir `data/<task>/V/`; must be a new/empty directory |
 | `--seed0 N` | 0 | first seed, incremented per try |
 | `--seeds a,b,c` | — | explicit seed list (overrides `--seed0`) |
+| `--repo-id ID` | `local/<task>` | LeRobot repository id stored in metadata |
 
 Output per dataset version:
 
 ```
-data/task1_pick_place/v1/
-├── episodes/episode_0000.npz   # per-frame obs + action labels (training data)
-├── videos/episode_0000.mp4     # expert execution video (dual cam + phase caption)
-├── failures/                   # failed episodes (npz + video pairs); only created if any
-├── manifest.jsonl              # one JSON line per episode
-└── norm_stats.json             # proprio/action normalization statistics
+data/task1_pick_place/lerobot_v0/
+├── data/chunk-000/file-000.parquet
+├── videos/
+│   ├── observation.images.overhead/chunk-000/file-000.mp4
+│   └── observation.images.wrist/chunk-000/file-000.mp4
+└── meta/
+    ├── info.json
+    ├── stats.json
+    ├── tasks.parquet
+    └── episodes/chunk-000/file-000.parquet
 ```
 
 Notes:
 
-- Bump the version number whenever the collection config changes; appending to
-  an existing version is meant for same-config batch extension only
-  (`norm_stats.json` covers the last run's episodes).
+- Collection writes the official LeRobot v3 format directly. Each row stores
+  `observation_t` together with the command executed at that instant:
+  `[delta_x_m, delta_y_m, delta_z_m, gripper_close]`. Failed attempts are
+  discarded. Use a new version name for every collection run.
 - Instructions are color-free for task1 (`pick up the cube and place it on the
   pad`) and type-only for task2 objects (`pick up the cylinder and place it on
   the blue pad`); colors are still randomized visually.
+
+For quick NumPy debugging, the alternative backend stores one NPZ and one MP4
+per episode while preserving the exact same action and temporal semantics:
+
+```bash
+python scripts/collect_data_npz.py 1 --episodes 10 --version npz_v0
+python scripts/check_data_npz.py --task task1_pick_place --version npz_v0
+```
 
 ### 3. Check the dataset
 
@@ -112,7 +138,7 @@ Notes:
 (task name = first-level dir under `data/`).
 
 ```bash
-python scripts/check_data.py --task task1_pick_place --version v1
+python scripts/check_data.py --task task1_pick_place --version lerobot_v0
 ```
 
 One command, full batch:
@@ -122,10 +148,8 @@ One command, full batch:
 - `inspect/montage_episode_XXXX.png` — keyframe strip per episode
   (one row per recorded camera, time left to right). Task 1/2 record overhead
   and wrist cameras; Task 3 records only the shoulder-view `door_cam`.
-- `inspect/trajectory.png` — ee trajectories + gripper opening
-- `inspect/replay_episode_XXXX.mp4` — re-execution from the recorded action
-  labels (deployment path preview for task 4; compare against `videos/` to see
-  open-loop following error)
+- `inspect/trajectory.png` — cumulative commanded EE displacement + gripper command
+- `inspect/replay_episode_XXXX.mp4` — re-execution from recorded delta actions
 
 Flags: `--replay all` (default; `0` skips, `N` replays first N) and
 `--no-video` to skip replay videos.
@@ -196,6 +220,10 @@ therefore inverts and binarizes the gripper command.
 | task1_pick_place | v2 | 50 episodes, 10D proprio, color-free instructions |
 | task2_pick_by_type | v2 | 10 episodes, 10D proprio, type-only object instructions |
 
+`v2` above is the legacy NPZ data. New collections should use a fresh name such
+as `lerobot_v0`; they are written directly as LeRobot v3 and are not mixed with
+the legacy datasets.
+
 Observation proprioception is 10D: waist yaw, seven right-arm joints, and two
 finger joints. Dataset versions recorded before v2 used a legacy 9D state that
 omitted waist yaw.
@@ -211,5 +239,6 @@ scripts/   thin CLI wrappers (collect / check / evaluate / demo)
 data/      datasets, videos, previews (gitignored)
 ```
 
-Expert status: task1 30/30, task2 ~200/200 success, all phases < 1s,
-no visible stalls.
+Delta-expert validation (30 randomized seeds): task1 30/30, task2 30/30,
+task3 30/30. The deterministic smoke suite also checks that `act()` is
+side-effect-free and each translation command respects the 15 mm step limit.
