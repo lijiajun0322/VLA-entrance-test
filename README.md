@@ -1,59 +1,67 @@
 # VLA G1 MuJoCo
 
 A LIBERO-style manipulation playground for a Unitree G1 humanoid in MuJoCo:
-scripted-expert task environments, model-free control, a demonstration data
-pipeline, and zero-shot OpenVLA policy inference.
+three task environments, scripted expert model-free control, a LeRobot data
+pipeline, zero-shot OpenVLA policy inference, LoRA fine-tuning, and evaluation of
+fine-tuned policies.
+
+## Included data samples
+
+`data_sample/` contains two successful demonstrations (seeds 0 and 1) for each
+of the three tasks in both the official LeRobot v3 format and the lightweight
+NPZ format. 
+
+```text
+data_sample/<task>/
+├── lerobot/   # LeRobot v3: Parquet data, metadata, and encoded camera videos
+└── npz/       # episode NPZ files, manifest/statistics, and preview videos
+```
 
 ## Quick reference
 
 ```bash
 # evaluate the scripted expert (1 = pick&place, 2 = pick by type, 3 = sliding door)
-python scripts/run_expert.py 1 --seeds 30            # headless success rate
 mjpython scripts/run_expert.py 1 --visual --seed 0   # watch one selected seed
+
+python scripts/run_expert.py 1 --seeds 30            # headless success rate
 
 # collect demonstration episodes
 python scripts/collect_data.py 1 --episodes 10 --version lerobot_v0
-
-# optional dwell frames for action-chunk experiments (20 Hz: 2/1 = 0.10/0.05 s)
-python scripts/collect_data.py 1 --episodes 50 --version lerobot_chunk_v0 \
-  --grasp-wait-ticks 2 --release-wait-ticks 1
-
-# optional lightweight NPZ backend (same causal delta actions)
-python scripts/collect_data_npz.py 1 --episodes 10 --version npz_v0
 
 # check the dataset: stats + montages + trajectory + full-batch replay
 python scripts/check_data.py --dataset task1_pick_place --version lerobot_v0
 
 # interactive task viewer
 mjpython scripts/demo_tasks.py 2
-mjpython scripts/demo_tasks.py 3                 # sliding cabinet door
 
 # Original OpenVLA baseline (LIBERO command -> 0.02 m/unit)
-python scripts/eval_openvla.py --task 1 --seeds 300 --max-actions 120 \
+python scripts/eval_openvla.py --task 1 --seeds 500 --max-actions 120 \
   --model openvla/openvla-7b-finetuned-libero-spatial \
   --unnorm-key libero_spatial --action-units normalized \
-  --translation-scale 0.02 --run-name task1_base_seed300
+  --translation-scale 0.02 --run-name task1_base_seed500
 
-# Evaluate an intermediate Task 1 LoRA adapter on the same seed
-python scripts/eval_openvla.py --task 1 --seeds 300 --max-actions 120 \
-  --adapter outputs/openvla_finetune/task1_pick_place/lora_v0/checkpoints/epoch_001 \
-  --unnorm-key g1_task1 --action-units meters \
-  --run-name task1_epoch1_seed300
 
-# validate, then LoRA-fine-tune OpenVLA on the Task 1 LeRobot dataset
-python scripts/train_openvla_lora.py --task 1 --dry-run
+# train lora SFT on OpenVla
+python scripts/train_openvla_lora.py \
+    --task 1 \
+    --dataset-path data/task1_pick_place/lerobot_no_wait_v2 \
+    --epochs 1 \
+    --batch-size 16 \
+    --grad-accumulation 1 \
+    --learning-rate 5e-4 \
+    --lora-rank 32 \
+    --val-ratio 0.1 \
+    --eval-every-steps 100 \
+    --log-every 5 \
+    --save-every-epoch \
+    --output-dir outputs/openvla_finetune/task1_pick_place/lora_v1
 
-# Equivalent explicit dataset selection (--dataset-path overrides --version)
-python scripts/train_openvla_lora.py --task 1 \
-  --dataset-path data/task1_pick_place/lerobot_v0 --dry-run
-python scripts/train_openvla_lora.py --task 1 --epochs 5 \
-  --batch-size 1 --grad-accumulation 8 --image-aug
 
 # evaluate the fine-tuned LoRA adapter on held-out seeds
-python scripts/eval_openvla.py --task 1 --seeds 100-109 \
-  --adapter outputs/openvla_finetune/task1_pick_place/lora_v0 \
+python scripts/eval_openvla.py --task 1 --seeds 500-504 \
+  --adapter outputs/openvla_finetune/task1_pick_place/lora_v1 \
   --unnorm-key g1_task1 --action-units meters \
-  --run-name task1_lora_seeds_100_109
+  --run-name task1_lora_seeds_500_504
 ```
 
 Task argument conventions: `run_expert` / `collect_data` take a numeric id
@@ -71,10 +79,12 @@ behavior is reproduced with `10/6`. At 20 Hz, one tick is 50 ms.
 
 ## Setup
 
+This project uses a Python 3.11 virtual environment managed by uv.
+
 ```bash
-python -m venv .venv && source .venv/bin/activate   # macOS
-pip install lerobot==0.4.4
-pip install peft==0.11.1                 # OpenVLA LoRA fine-tuning
+uv venv --python 3.11
+source .venv/bin/activate   # macOS
+uv pip install lerobot==0.4.4 peft==0.11.1  # OpenVLA LoRA fine-tuning
 ```
 
 - Scripts without a viewer window run with plain `python`.
@@ -85,7 +95,7 @@ pip install peft==0.11.1                 # OpenVLA LoRA fine-tuning
 
 ```
 scripts/run_expert.py    evaluate the scripted expert (control quality)
-scripts/collect_data.py  collect demonstration episodes (task 3)
+scripts/collect_data.py  collect LeRobot demonstration episodes (tasks 1–3)
 scripts/check_data.py    inspect + replay-verify the dataset
 scripts/collect_data_npz.py / check_data_npz.py  lightweight NumPy workflow
 scripts/demo_tasks.py    interactive task viewer (mjpython)
@@ -131,6 +141,8 @@ Flags:
 | `--seed0 N` | 0 | first seed, incremented per try |
 | `--seeds a,b,c` | — | explicit seed list (overrides `--seed0`) |
 | `--repo-id ID` | `local/<task>` | LeRobot repository id stored in metadata |
+| `--grasp-wait-ticks N` | 0 | stationary close-gripper frames before lift/slide |
+| `--release-wait-ticks N` | 0 | stationary open-gripper frames before retreat |
 
 Output per dataset version:
 
@@ -345,8 +357,9 @@ mujoco_datasets/  spec.py / recorder.py — data contract & recording
 policies/  learned-policy wrappers (OpenVLA)
 scripts/   thin CLI wrappers (collect / check / evaluate / demo)
 data/      datasets, videos, previews (gitignored)
+data_sample/  two Git-tracked LeRobot and NPZ example episodes per task
 ```
 
-Delta-expert validation (30 randomized seeds): task1 30/30, task2 30/30,
-task3 30/30. The deterministic smoke suite also checks that `act()` is
+Delta-expert validation (100 randomized seeds): task1 100/100, task2 100/100,
+task3 100/100. The deterministic smoke suite also checks that `act()` is
 side-effect-free and each translation command respects the 15 mm step limit.

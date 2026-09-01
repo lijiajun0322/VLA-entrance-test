@@ -1,0 +1,2 @@
+{"episode": "episodes/episode_000000.npz", "video": "videos/episode_000000.mp4", "n_frames": 215, "success": true, "instruction": "pull the sliding door open", "task": "task3_open_sliding_door", "seed": 0, "cameras": {"overhead_rgb": "door_cam"}}
+{"episode": "episodes/episode_000001.npz", "video": "videos/episode_000001.mp4", "n_frames": 52, "success": true, "instruction": "slide the cabinet door open", "task": "task3_open_sliding_door", "seed": 1, "cameras": {"overhead_rgb": "door_cam"}}

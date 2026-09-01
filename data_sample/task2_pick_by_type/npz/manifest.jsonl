@@ -1,0 +1,2 @@
+{"episode": "episodes/episode_000000.npz", "video": "videos/episode_000000.mp4", "n_frames": 90, "success": true, "instruction": "move the cylinder onto the purple pad", "task": "task2_pick_by_type", "seed": 0, "cameras": {"overhead_rgb": "overhead_cam", "wrist_rgb": "wrist_cam"}}
+{"episode": "episodes/episode_000001.npz", "video": "videos/episode_000001.mp4", "n_frames": 95, "success": true, "instruction": "move the T block onto the orange pad", "task": "task2_pick_by_type", "seed": 1, "cameras": {"overhead_rgb": "overhead_cam", "wrist_rgb": "wrist_cam"}}

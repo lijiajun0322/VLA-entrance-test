@@ -1,0 +1,2 @@
+{"episode": "episodes/episode_000000.npz", "video": "videos/episode_000000.mp4", "n_frames": 92, "success": true, "instruction": "pick up the cube and place it on the pad", "task": "task1_pick_place", "seed": 0, "cameras": {"overhead_rgb": "overhead_cam", "wrist_rgb": "wrist_cam"}}
+{"episode": "episodes/episode_000001.npz", "video": "videos/episode_000001.mp4", "n_frames": 97, "success": true, "instruction": "pick up the cube and place it on the pad", "task": "task1_pick_place", "seed": 1, "cameras": {"overhead_rgb": "overhead_cam", "wrist_rgb": "wrist_cam"}}
