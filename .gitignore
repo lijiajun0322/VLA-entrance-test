@@ -13,6 +13,9 @@ unitree_mujoco/
 # 录制数据与预览图（可由脚本重新生成）
 data/
 
+# 训练 checkpoint / adapter（体积大，可由训练脚本重新生成）
+outputs/
+
 # 临时/日志
 *.log
 .DS_Store

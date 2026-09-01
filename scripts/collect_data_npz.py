@@ -18,7 +18,8 @@ from envs import ALL_TASKS, G1TaskEnv
 from mujoco_datasets.npz_recorder import NpzEpisodeRecorder
 
 
-def collect(task_id: int, episodes: int, version: str, seed0: int, seeds=None):
+def collect(task_id: int, episodes: int, version: str, seed0: int, seeds=None,
+            grasp_wait_ticks: int = 0, release_wait_ticks: int = 0):
     task = ALL_TASKS[task_id - 1]
     env = G1TaskEnv(task)
     out_dir = Path(__file__).resolve().parent.parent / "data" / task.name / version
@@ -31,7 +32,7 @@ def collect(task_id: int, episodes: int, version: str, seed0: int, seeds=None):
             break
         env.reset(seed)
         recorder.start(env, seed)
-        expert = make_expert(env, task)
+        expert = make_expert(env, task, grasp_wait_ticks, release_wait_ticks)
         while not expert.done:
             phase = expert._phase()
             action = expert.act()
@@ -59,6 +60,9 @@ if __name__ == "__main__":
     parser.add_argument("--seed0", type=int, default=0)
     parser.add_argument("--seeds", default=None,
                         help="comma-separated explicit seeds (overrides --seed0)")
+    parser.add_argument("--grasp-wait-ticks", type=int, default=0)
+    parser.add_argument("--release-wait-ticks", type=int, default=0)
     args = parser.parse_args()
     explicit = [int(value) for value in args.seeds.split(",")] if args.seeds else None
-    collect(args.task, args.episodes, args.version, args.seed0, explicit)
+    collect(args.task, args.episodes, args.version, args.seed0, explicit,
+            args.grasp_wait_ticks, args.release_wait_ticks)

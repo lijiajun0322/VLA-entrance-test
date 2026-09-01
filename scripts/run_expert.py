@@ -17,13 +17,14 @@ from control.expert import make_expert
 from mujoco_datasets.spec import ACTION_SPEC
 
 
-def run_headless(task_id: int, seeds: int):
+def run_headless(task_id: int, seeds: int, grasp_wait_ticks: int = 0,
+                 release_wait_ticks: int = 0):
     task = ALL_TASKS[task_id - 1]
     env = G1TaskEnv(task)
     wins = 0
     for seed in range(seeds):
         env.reset(seed)
-        expert = make_expert(env, task)
+        expert = make_expert(env, task, grasp_wait_ticks, release_wait_ticks)
         expert.run()
         ok = env.is_success()
         wins += ok
@@ -32,14 +33,15 @@ def run_headless(task_id: int, seeds: int):
     print(f"\n[{task.name}] 成功率: {wins}/{seeds} = {wins / seeds:.0%}")
 
 
-def run_visual(task_id: int, seed: int = 0):
+def run_visual(task_id: int, seed: int = 0, grasp_wait_ticks: int = 0,
+               release_wait_ticks: int = 0):
     import mujoco
     import mujoco.viewer
 
     task = ALL_TASKS[task_id - 1]
     env = G1TaskEnv(task)
     env.reset(seed)
-    expert = make_expert(env, task)
+    expert = make_expert(env, task, grasp_wait_ticks, release_wait_ticks)
     print(f"[{task.name}] {env.instruction}")
     with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
         configure_viewer_camera(viewer, env.model, task.name)
@@ -69,8 +71,12 @@ if __name__ == "__main__":
     ap.add_argument("--visual", action="store_true")
     ap.add_argument("--seed", type=int, default=0,
                     help="可视化模式使用的单个随机 seed（默认 0）")
+    ap.add_argument("--grasp-wait-ticks", type=int, default=0)
+    ap.add_argument("--release-wait-ticks", type=int, default=0)
     args = ap.parse_args()
     if args.visual:
-        run_visual(args.task, args.seed)
+        run_visual(args.task, args.seed, args.grasp_wait_ticks,
+                   args.release_wait_ticks)
     else:
-        run_headless(args.task, args.seeds)
+        run_headless(args.task, args.seeds, args.grasp_wait_ticks,
+                     args.release_wait_ticks)

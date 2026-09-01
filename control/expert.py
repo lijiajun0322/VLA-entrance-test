@@ -16,8 +16,6 @@ MAX_DELTA_M = 0.015
 TOL_POS = 0.008
 SETTLE_TICKS = 2
 PHASE_TIMEOUT_TICKS = 180
-WAIT_GRASP_TICKS = 10
-WAIT_RELEASE_TICKS = 6
 
 APPROACH_H = 0.12
 LIFT_H = 0.15
@@ -38,8 +36,13 @@ class _DeltaExpertBase:
 
     PHASES: list[str]
 
-    def __init__(self, env):
+    def __init__(self, env, grasp_wait_ticks: int = 0,
+                 release_wait_ticks: int = 0):
+        if grasp_wait_ticks < 0 or release_wait_ticks < 0:
+            raise ValueError("wait ticks must be non-negative")
         self.env = env
+        self.grasp_wait_ticks = int(grasp_wait_ticks)
+        self.release_wait_ticks = int(release_wait_ticks)
         self.executor = OnlineActionExecutor(env)
         self.phase_i = 0
         self.phase_tick = 0
@@ -55,6 +58,11 @@ class _DeltaExpertBase:
 
     def _advance(self):
         self.phase_i += 1
+        # wait=0 时 grasp/release 是零时长语义转换；正数时则进入该 phase，
+        # 生成指定帧数的静止夹爪动作。
+        while (self.PHASES[self.phase_i] in ("grasp", "release")
+               and self._wait_ticks(self.PHASES[self.phase_i]) == 0):
+            self.phase_i += 1
         self._enter_phase()
 
     def _enter_phase(self):
@@ -72,6 +80,13 @@ class _DeltaExpertBase:
         return bool(self._target is not None and
                     np.linalg.norm(self._target - self.env.ee_xpos()) < TOL_POS)
 
+    def _wait_ticks(self, phase: str) -> int:
+        if phase == "grasp":
+            return self.grasp_wait_ticks
+        if phase == "release":
+            return self.release_wait_ticks
+        return 0
+
     def _is_wait_phase(self) -> bool:
         return self._phase() in ("grasp", "release")
 
@@ -88,13 +103,10 @@ class _DeltaExpertBase:
         if self.done:
             return
         self.phase_tick += 1
-        ph = self._phase()
         if self._is_wait_phase():
-            wait = WAIT_GRASP_TICKS if ph == "grasp" else WAIT_RELEASE_TICKS
-            if self.phase_tick >= wait:
+            if self.phase_tick >= self._wait_ticks(self._phase()):
                 self._advance()
             return
-
         reached = self._movement_reached()
         self.stable_ticks = self.stable_ticks + 1 if reached else 0
         if self.stable_ticks >= SETTLE_TICKS:
@@ -126,12 +138,13 @@ class PickPlaceExpert(_DeltaExpertBase):
     PHASES = ["above_obj", "descend", "grasp", "lift",
               "above_pad", "place", "release", "retract", "done"]
 
-    def __init__(self, env, spec: dict):
+    def __init__(self, env, spec: dict, grasp_wait_ticks: int = 0,
+                 release_wait_ticks: int = 0):
         self.obj_name = spec["obj_name"]
         self.pad_name = spec["pad_name"]
         self.place_h = float(spec.get("place_h", 0.045))
         self.grasp_z = float(spec.get("grasp_z", GRASP_Z_OFF))
-        super().__init__(env)
+        super().__init__(env, grasp_wait_ticks, release_wait_ticks)
         self._enter_phase()
 
     def _waypoint(self):
@@ -166,14 +179,15 @@ class OpenSlidingDoorExpert(_DeltaExpertBase):
     PHASES = ["above_handle", "descend", "grasp", "slide",
               "release", "retract", "done"]
 
-    def __init__(self, env, spec: dict):
+    def __init__(self, env, spec: dict, grasp_wait_ticks: int = 0,
+                 release_wait_ticks: int = 0):
         self.joint_name = spec["joint_name"]
         self.handle_site = spec["handle_site"]
         self.slide_axis = np.asarray(spec["slide_axis"], dtype=float)
         self.open_distance = float(spec["open_distance"])
         self.grasp_z_offset = float(spec.get("grasp_z_offset", 0.0))
         self.success_qpos = float(spec["success_qpos"])
-        super().__init__(env)
+        super().__init__(env, grasp_wait_ticks, release_wait_ticks)
         self._enter_phase()
 
     def _waypoint(self):
@@ -200,9 +214,12 @@ class OpenSlidingDoorExpert(_DeltaExpertBase):
         return super()._movement_reached()
 
 
-def make_expert(env, task):
+def make_expert(env, task, grasp_wait_ticks: int = 0,
+                release_wait_ticks: int = 0):
     """由 task.expert_spec().kind 选择同文件内的 expert。"""
     spec = task.expert_spec()
     if spec.get("kind") == "sliding_door":
-        return OpenSlidingDoorExpert(env, spec)
-    return PickPlaceExpert(env, spec)
+        return OpenSlidingDoorExpert(
+            env, spec, grasp_wait_ticks, release_wait_ticks
+        )
+    return PickPlaceExpert(env, spec, grasp_wait_ticks, release_wait_ticks)

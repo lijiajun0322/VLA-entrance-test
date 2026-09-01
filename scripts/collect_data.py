@@ -22,7 +22,8 @@ from mujoco_datasets.recorder import EpisodeRecorder
 
 
 def collect(task_id: int, episodes: int, version: str, seed0: int, seeds=None,
-            repo_id: str | None = None):
+            repo_id: str | None = None, grasp_wait_ticks: int = 0,
+            release_wait_ticks: int = 0):
     task = ALL_TASKS[task_id - 1]
     env = G1TaskEnv(task)
     out_dir = Path(__file__).resolve().parent.parent / "data" / task.name / version
@@ -36,7 +37,7 @@ def collect(task_id: int, episodes: int, version: str, seed0: int, seeds=None,
             break
         env.reset(seed)
         rec.start(env, seed=seed)
-        expert = make_expert(env, task)
+        expert = make_expert(env, task, grasp_wait_ticks, release_wait_ticks)
         while not expert.done:
             # Causal alignment: store (observation_t, action_t), then execute.
             phase = expert._phase()
@@ -69,6 +70,9 @@ if __name__ == "__main__":
                     help="逗号分隔的显式 seed 列表（优先于 --seed0 顺延）")
     ap.add_argument("--repo-id", default=None,
                     help="LeRobot repo id metadata（默认 local/<task_name>）")
+    ap.add_argument("--grasp-wait-ticks", type=int, default=0)
+    ap.add_argument("--release-wait-ticks", type=int, default=0)
     args = ap.parse_args()
     seeds = [int(s) for s in args.seeds.split(",")] if args.seeds else None
-    collect(args.task, args.episodes, args.version, args.seed0, seeds, args.repo_id)
+    collect(args.task, args.episodes, args.version, args.seed0, seeds,
+            args.repo_id, args.grasp_wait_ticks, args.release_wait_ticks)

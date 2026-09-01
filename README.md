@@ -14,6 +14,10 @@ mjpython scripts/run_expert.py 1 --visual --seed 0   # watch one selected seed
 # collect demonstration episodes
 python scripts/collect_data.py 1 --episodes 10 --version lerobot_v0
 
+# optional dwell frames for action-chunk experiments (20 Hz: 2/1 = 0.10/0.05 s)
+python scripts/collect_data.py 1 --episodes 50 --version lerobot_chunk_v0 \
+  --grasp-wait-ticks 2 --release-wait-ticks 1
+
 # optional lightweight NPZ backend (same causal delta actions)
 python scripts/collect_data_npz.py 1 --episodes 10 --version npz_v0
 
@@ -24,12 +28,17 @@ python scripts/check_data.py --dataset task1_pick_place --version lerobot_v0
 mjpython scripts/demo_tasks.py 2
 mjpython scripts/demo_tasks.py 3                 # sliding cabinet door
 
-# OpenVLA: short closed-loop smoke rollout
-python scripts/eval_openvla.py --task 1 --seeds 100 --max-actions 120
+# Original OpenVLA baseline (LIBERO command -> 0.02 m/unit)
+python scripts/eval_openvla.py --task 1 --seeds 300 --max-actions 120 \
+  --model openvla/openvla-7b-finetuned-libero-spatial \
+  --unnorm-key libero_spatial --action-units normalized \
+  --translation-scale 0.02 --run-name task1_base_seed300
 
-# OpenVLA: held-out evaluation with results in a named run directory
-python scripts/eval_openvla.py --task 1 --seeds 0-4 --max-actions 120 \
-  --run-name openvla_seeds_0_4
+# Evaluate an intermediate Task 1 LoRA adapter on the same seed
+python scripts/eval_openvla.py --task 1 --seeds 300 --max-actions 120 \
+  --adapter outputs/openvla_finetune/task1_pick_place/lora_v0/checkpoints/epoch_001 \
+  --unnorm-key g1_task1 --action-units meters \
+  --run-name task1_epoch1_seed300
 
 # validate, then LoRA-fine-tune OpenVLA on the Task 1 LeRobot dataset
 python scripts/train_openvla_lora.py --task 1 --dry-run
@@ -40,9 +49,9 @@ python scripts/train_openvla_lora.py --task 1 \
 python scripts/train_openvla_lora.py --task 1 --epochs 5 \
   --batch-size 1 --grad-accumulation 8 --image-aug
 
-# evaluate the merged fine-tuned checkpoint on held-out seeds
+# evaluate the fine-tuned LoRA adapter on held-out seeds
 python scripts/eval_openvla.py --task 1 --seeds 100-109 \
-  --model outputs/openvla_finetune/task1_pick_place/lora_v0 \
+  --adapter outputs/openvla_finetune/task1_pick_place/lora_v0 \
   --unnorm-key g1_task1 --action-units meters \
   --run-name task1_lora_seeds_100_109
 ```
@@ -52,6 +61,13 @@ Task argument conventions: `run_expert` / `collect_data` take a numeric id
 first-level dir name under `data/` (i.e. the task's registered name,
 `task1_pick_place` / `task2_pick_by_type`), `--version` the second level:
 `data/<task>/<version>/`.
+
+Expert grasp/release dwell is configurable in both collection backends and
+`run_expert.py`. Defaults are `--grasp-wait-ticks 0` and
+`--release-wait-ticks 0`: close is issued together with the first lift/slide
+action, and open together with retract, avoiding no-op traps for single-frame
+OpenVLA. Action-chunk policies may use a short dwell such as `2/1`; the legacy
+behavior is reproduced with `10/6`. At 20 Hz, one tick is 50 ms.
 
 ## Setup
 
@@ -187,13 +203,27 @@ controller keeps the gripper orientation vertically downward.
 # One real MuJoCo frame -> one model action, without moving the robot
 python scripts/check_openvla.py --seed 100
 
-# Short closed-loop safety smoke test
-python scripts/eval_openvla.py --task 1 --seeds 100 --max-actions 10
+# Short original-model safety smoke test
+python scripts/eval_openvla.py --task 1 --seeds 300 --max-actions 10 \
+  --unnorm-key libero_spatial --action-units normalized
 
-# Held-out evaluation
-python scripts/eval_openvla.py --task 1 --seeds 100-119 --max-actions 120 \
-  --run-name heldout_seeds_100_119
+# Original OpenVLA held-out baseline
+python scripts/eval_openvla.py --task 1 --seeds 300-309 --max-actions 120 \
+  --model openvla/openvla-7b-finetuned-libero-spatial \
+  --unnorm-key libero_spatial --action-units normalized \
+  --translation-scale 0.02 --run-name task1_base_seeds300_309
 ```
+
+For a fair before/after comparison, keep `--task`, `--seeds`, and
+`--max-actions` identical. The model-specific action contracts are:
+
+| policy | `--unnorm-key` | `--action-units` | adapter scaling |
+|---|---|---|---|
+| original LIBERO OpenVLA | `libero_spatial` | `normalized` | multiply xyz by `0.02` |
+| Task 1 LoRA adapter | `g1_task1` | `meters` | no xyz scaling |
+
+The original-model values shown above are also the CLI defaults, but they are
+written explicitly in evaluation commands to make the action contract clear.
 
 `--task 1`, `--task 2`, and `--task 3` select pick-and-place,
 pick-by-type, and sliding-door evaluation respectively. The default is Task 1.
@@ -247,21 +277,21 @@ fine-tuned model returns translation in meters, not a LIBERO controller unit.
 # Fast validation: real first video frame + instruction + action-token labels
 python scripts/train_openvla_lora.py --task 1 --dry-run
 
-# LoRA training on MPS; output is a merged, directly loadable checkpoint
+# LoRA training on MPS; output is a PEFT LoRA adapter
 python scripts/train_openvla_lora.py --task 1 --epochs 5 \
   --batch-size 1 --grad-accumulation 8 --image-aug
 
-# Held-out evaluation; meters is required for this fine-tuned checkpoint
+# Held-out evaluation; meters is required for this fine-tuned adapter
 python scripts/eval_openvla.py --task 1 --seeds 100-109 \
-  --model outputs/openvla_finetune/task1_pick_place/lora_v0 \
+  --adapter outputs/openvla_finetune/task1_pick_place/lora_v0 \
   --unnorm-key g1_task1 --action-units meters \
   --run-name task1_lora_seeds_100_109
 ```
 
 Training output defaults to
-`outputs/openvla_finetune/task1_pick_place/lora_v0/`. Use `--adapter-only` only
-when a small PEFT adapter is desired; the default merges LoRA into a checkpoint
-that `eval_openvla.py` can load directly.
+`outputs/openvla_finetune/task1_pick_place/lora_v0/`. The final output and all
+intermediate checkpoints contain only the PEFT LoRA adapter, processor/config,
+and action-normalization metadata; the base OpenVLA weights are not duplicated.
 
 Per-optimizer-step loss, unclipped gradient norm, dynamic loss scale, and
 learning rate are written to `train_metrics.csv`. The same metrics are printed
@@ -278,10 +308,18 @@ disable validation.
 
 `--save-every-steps N` saves intermediate PEFT adapters under
 `<output>/checkpoints/step_XXXXXX/`; `--save-every-epoch` similarly saves
-`epoch_XXX/`. Intermediate checkpoints are adapter-only to avoid repeatedly
-writing a full 15 GB model (a rank-32 adapter is still roughly 670 MB). The
-final output keeps the normal behavior: merged model by default, adapter-only
-with `--adapter-only`.
+`epoch_XXX/`. These checkpoints and the final output are adapter-only, avoiding
+an additional full-model copy (a rank-32 adapter is still roughly 670 MB).
+
+Final and intermediate adapters can be evaluated without writing a merged copy;
+`eval_openvla.py` loads the base model and merges the adapter in memory:
+
+```bash
+python scripts/eval_openvla.py --task 1 --seeds 300 \
+  --adapter outputs/openvla_finetune/task1_pick_place/lora_v0/checkpoints/epoch_001 \
+  --unnorm-key g1_task1 --action-units meters \
+  --run-name task1_epoch1_seed300
+```
 
 ## Current dataset versions
 

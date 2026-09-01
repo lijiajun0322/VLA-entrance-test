@@ -73,6 +73,25 @@ def test_delta_expert_contract():
     print("  [ok] 三任务 delta expert act() 契约")
 
 
+def test_openvla_action_units():
+    """LIBERO command 与微调米制输出经 adapter 后得到相同物理 delta。"""
+    from control.openvla_action_adapter import OpenVLAActionAdapter
+
+    current = np.array([0.30, -0.10, 0.85])
+    normalized = np.array([0.5, -0.25, 0.1, 0, 0, 0, 1])
+    metric = np.array([0.01, -0.005, 0.002, 0, 0, 0, 1])
+    old = OpenVLAActionAdapter(
+        action_units="normalized", translation_scale=0.02
+    ).convert(normalized, current)
+    fine_tuned = OpenVLAActionAdapter(
+        action_units="meters"
+    ).convert(metric, current)
+    np.testing.assert_allclose(old.applied_delta_m, metric[:3], atol=1e-8)
+    np.testing.assert_allclose(fine_tuned.applied_delta_m, metric[:3], atol=1e-8)
+    np.testing.assert_allclose(old.action4, fine_tuned.action4, atol=1e-8)
+    print("  [ok] OpenVLA normalized/meters action units")
+
+
 def test_expert_task2(rate_threshold=0.8):
     """task2 delta expert 在物体/目标随机化下成功率 >= 80%。"""
     from envs import ALL_TASKS, G1TaskEnv
@@ -156,6 +175,7 @@ if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     tests = {"build": test_build_and_reset,
              "action": test_delta_expert_contract,
+             "openvla_action": test_openvla_action_units,
              "expert": test_expert_task1,
              "expert2": test_expert_task2,
              "door": test_expert_task3,
