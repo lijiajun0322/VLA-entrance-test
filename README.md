@@ -9,7 +9,7 @@ fine-tuned policies.
 
 `data_sample/` contains two successful demonstrations (seeds 0 and 1) for each
 of the three tasks in both the official LeRobot v3 format and the lightweight
-NPZ format. 
+NPZ format, and openvla model inference on task1 and the evaluation after lora fine-tuned.
 
 ```text
 data_sample/<task>/

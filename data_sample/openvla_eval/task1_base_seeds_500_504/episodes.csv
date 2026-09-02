@@ -1,0 +1,6 @@
+seed,task,task_kind,success,ever_lifted,ever_reached_target,max_task_progress,n_actions,ik_failures,ik_failure_rate,clipped_actions,clipping_rate,mean_inference_s,p95_inference_s,video,log
+500,task1_pick_place,pick_place,False,False,False,0.0,120,0,0.0,79,0.6583333333333333,0.3083884336929865,0.31592762673681135,data/openvla_eval/task1_base_seeds_500_504/seed_500.mp4,data/openvla_eval/task1_base_seeds_500_504/seed_500.json
+501,task1_pick_place,pick_place,False,False,False,0.0,120,0,0.0,94,0.7833333333333333,0.3193648635931216,0.3298329270866816,data/openvla_eval/task1_base_seeds_500_504/seed_501.mp4,data/openvla_eval/task1_base_seeds_500_504/seed_501.json
+502,task1_pick_place,pick_place,False,False,False,0.0,120,0,0.0,0,0.0,0.32823262889190424,0.3420405910073896,data/openvla_eval/task1_base_seeds_500_504/seed_502.mp4,data/openvla_eval/task1_base_seeds_500_504/seed_502.json
+503,task1_pick_place,pick_place,False,False,False,0.0,120,0,0.0,37,0.30833333333333335,0.32846123684818546,0.33289673545368714,data/openvla_eval/task1_base_seeds_500_504/seed_503.mp4,data/openvla_eval/task1_base_seeds_500_504/seed_503.json
+504,task1_pick_place,pick_place,False,False,False,0.0,120,0,0.0,68,0.5666666666666667,0.339093054542415,0.3500454767534393,data/openvla_eval/task1_base_seeds_500_504/seed_504.mp4,data/openvla_eval/task1_base_seeds_500_504/seed_504.json
